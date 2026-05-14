@@ -1,16 +1,20 @@
 import asyncpg
+import logging
 from fastapi import APIRouter, HTTPException
 
-from app.db.queries import execute_dijkstra_search, fetch_node_names
+logger = logging.getLogger(__name__)
+
+from app.db.queries import execute_dijkstra_search, fetch_node_names, build_child_tree_by_rsm_id
 from app.schemas.paths import (
     DijkstraRequest,
     DijkstraResponse,
     DijkstraPathGroup,
     DijkstraPathNode,
     DijkstraSortBy,
+    ChildTreeResponse,
 )
 
-router = APIRouter(prefix="/api/v2", tags=["paths"])
+router = APIRouter(prefix="/api/v1", tags=["paths"])
 
 
 @router.post(
@@ -45,9 +49,9 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
         )
     
     all_nodes: list[tuple[str, str, str]] = []
-    for eotar_id, paths in results.items():
-        for finish_node, data in paths.items():
-            for node_id in data["path"]:
+    for eotar_id, data in results.items():
+        for finish_node, path_data in data["paths"].items():
+            for node_id in path_data["path"]:
                 parts = node_id.split("|")
                 all_nodes.append((
                     parts[0] if len(parts) > 0 else "",
@@ -59,8 +63,8 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
     
     path_groups: dict[tuple, dict] = {}
     
-    for eotar_id, paths in results.items():
-        for finish_node, data in paths.items():
+    for eotar_id, result_data in results.items():
+        for finish_node, data in result_data["paths"].items():
             path_key = tuple(data["path"])
             
             if path_key not in path_groups:
@@ -87,6 +91,7 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
                     "path": named_path,
                     "integration_example_count": 0,
                     "eotar_rsm_id": eotar_id,
+                    "eotar_rsm_date_time": result_data.get("eotar_rsm_date_time"),
                 }
             
             path_groups[path_key]["integration_example_count"] += 1
@@ -106,6 +111,12 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
             path_groups.values(),
             key=lambda x: (len(x["path"]), -x["integration_example_count"])
         )
+    elif request.sort_by == DijkstraSortBy.MOST_RECENT:
+        sorted_paths = sorted(
+            path_groups.values(),
+            key=lambda x: (x.get("eotar_rsm_date_time") is None, x.get("eotar_rsm_date_time") or "", -x["integration_example_count"]),
+            reverse=True
+        )
     else:
         sorted_paths = sorted(
             path_groups.values(),
@@ -115,3 +126,44 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
     return DijkstraResponse(
         results=[DijkstraPathGroup(**p) for p in sorted_paths]
     )
+
+
+@router.get(
+    "/object/childAll",
+    response_model=ChildTreeResponse,
+    responses={
+        404: {"description": "Object not found"},
+        503: {"description": "Database unavailable"},
+        504: {"description": "Database timeout"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def get_child_tree(rsm_id: str) -> ChildTreeResponse:
+    try:
+        result = await build_child_tree_by_rsm_id(rsm_id)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database connection error"},
+        )
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise HTTPException(
+            status_code=504,
+            detail={"code": "DATABASE_TIMEOUT", "message": "Database query timeout"},
+        )
+    except Exception as e:
+        logger.error(f"Internal error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_SERVER_ERROR", "message": str(e)},
+        )
+    
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "OBJECT_NOT_FOUND", "message": f"Object with rsm_id={rsm_id} not found"},
+        )
+    
+    return result

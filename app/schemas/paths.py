@@ -68,6 +68,7 @@ class DijkstraSortBy(str, Enum):
     MOST_FREQUENT = "most_frequent"
     LONGEST = "longest"
     SHORTEST = "shortest"
+    MOST_RECENT = "most_recent"
 
 
 class DijkstraRequest(BaseModel):
@@ -93,7 +94,20 @@ class DijkstraPathGroup(BaseModel):
     path: list[DijkstraPathNode]
     integration_example_count: int
     eotar_rsm_id: str
+    eotar_rsm_date_time: Optional[str] = None
 
 
 class DijkstraResponse(BaseModel):
     results: list[DijkstraPathGroup]
+
+
+class ChildNode(BaseModel):
+    properties: dict = {}
+
+
+class ChildTreeResponse(BaseModel):
+    node: ChildNode
+    children: list["ChildTreeResponse"] = []
+
+
+ChildTreeResponse.model_rebuild()

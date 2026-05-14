@@ -6,7 +6,7 @@ import asyncpg
 
 from app.core.config import settings
 from app.db.pool import get_pool
-from app.schemas.paths import DijkstraFilter
+from app.schemas.paths import DijkstraFilter, ChildTreeResponse, ChildNode
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +274,7 @@ class GraphEdge:
         to_component: Optional[str],
         weight: int,
         eotar_rsm_id: str,
+        eotar_rsm_date_time: Optional[str],
     ):
         self.from_system = from_system
         self.from_module = from_module
@@ -283,6 +284,7 @@ class GraphEdge:
         self.to_component = to_component
         self.weight = weight
         self.eotar_rsm_id = eotar_rsm_id
+        self.eotar_rsm_date_time = eotar_rsm_date_time
 
 
 def build_dijkstra_graph_query(graph_name: str) -> str:
@@ -296,7 +298,8 @@ def build_dijkstra_graph_query(graph_name: str) -> str:
              r.provider_module_rsm_id as to_module,
              r.provider_component_rsm_id as to_component,
              r.weight as weight, 
-             r.eotar_rsm_id
+             r.eotar_rsm_id,
+             r.eotar_rsm_date_time
     $$) as (
         from_system text, 
         from_module text,
@@ -305,7 +308,8 @@ def build_dijkstra_graph_query(graph_name: str) -> str:
         to_module text,
         to_component text,
         weight int, 
-        eotar_rsm_id text
+        eotar_rsm_id text,
+        eotar_rsm_date_time text
     )
     """
 
@@ -341,6 +345,7 @@ async def load_graph_edges() -> list[GraphEdge]:
             to_component=row["to_component"],
             weight=row["weight"] or 1,
             eotar_rsm_id=row["eotar_rsm_id"],
+            eotar_rsm_date_time=row["eotar_rsm_date_time"],
         )
         for row in rows
     ]
@@ -391,6 +396,7 @@ async def execute_dijkstra_search(
         graph[from_node][to_node].append({
             "eotar_rsm_id": edge.eotar_rsm_id,
             "weight": edge.weight,
+            "eotar_rsm_date_time": edge.eotar_rsm_date_time,
         })
     
     start_nodes = [n for n in all_nodes if matches_node(n, start_filter)]
@@ -415,13 +421,22 @@ async def execute_dijkstra_search(
     if not start_nodes or not finish_nodes:
         return {}
     
-    eotar_ids: set[str] = set()
+    eotar_data: dict[str, dict] = {}
     for start_node in start_nodes:
         if start_node in graph:
             for neighbor in graph[start_node]:
                 for edge in graph[start_node][neighbor]:
-                    if edge["eotar_rsm_id"]:
-                        eotar_ids.add(edge["eotar_rsm_id"])
+                    eotar_id = edge["eotar_rsm_id"]
+                    if eotar_id:
+                        existing = eotar_data.get(eotar_id)
+                        new_date = edge.get("eotar_rsm_date_time")
+                        if existing is None or (new_date and (existing.get("eotar_rsm_date_time") is None or new_date > existing.get("eotar_rsm_date_time", ""))):
+                            eotar_data[eotar_id] = {
+                                "eotar_rsm_id": eotar_id,
+                                "eotar_rsm_date_time": new_date,
+                            }
+    
+    eotar_ids: set[str] = set(eotar_data.keys())
     
     logger.info(f"Dijkstra: {len(eotar_ids)} unique eotar_rsm_ids to process")
     
@@ -473,7 +488,10 @@ async def execute_dijkstra_search(
             }
         
         if paths:
-            results[selected_eotar] = paths
+            results[selected_eotar] = {
+                "paths": paths,
+                "eotar_rsm_date_time": eotar_data.get(selected_eotar, {}).get("eotar_rsm_date_time"),
+            }
     
     logger.info(f"Dijkstra: found paths in {len(results)} eotar groups")
     return results
@@ -570,3 +588,275 @@ async def fetch_node_names(
     
     logger.info(f"Fetched names for {len(result)} nodes")
     return result
+
+
+def parse_agtype(agtype_str: str) -> dict:
+    import re
+    if not agtype_str:
+        return {}
+    
+    cleaned = agtype_str.strip()
+    if cleaned.startswith('"') and cleaned.endswith('"'):
+        cleaned = cleaned[1:-1]
+    
+    cleaned = re.sub(r'::[\w]+$', '', cleaned)
+    
+    if cleaned.startswith('{') and cleaned.endswith('}'):
+        props = {}
+        content = cleaned[1:-1]
+        
+        pattern = r'"([^"]+)"\s*:\s*(?:"([^"]*)"|(\d+(?:\.\d+)?)|(\w+))'
+        for match in re.finditer(pattern, content):
+            key = match.group(1)
+            if match.group(2) is not None:
+                props[key] = match.group(2)
+            elif match.group(3) is not None:
+                val = match.group(3)
+                props[key] = float(val) if '.' in val else int(val)
+            elif match.group(4) is not None:
+                props[key] = match.group(4)
+        
+        return props
+    
+    return {}
+
+
+def build_system_find_query(graph_name: str, rsm_id: str) -> str:
+    return f"""
+    SELECT *
+    FROM ag_catalog.cypher('{graph_name}', $$
+        MATCH (r:SYSTEM {{system_rsm_id: "{rsm_id}"}})
+        RETURN r, id(r)
+    $$) AS (r ag_catalog.agtype, r_id bigint)
+    """
+
+
+def build_module_find_query(graph_name: str, rsm_id: str) -> str:
+    return f"""
+    SELECT *
+    FROM ag_catalog.cypher('{graph_name}', $$
+        MATCH (r:MODULE {{module_rsm_id: "{rsm_id}"}})
+        RETURN r, id(r)
+    $$) AS (r ag_catalog.agtype, r_id bigint)
+    """
+
+
+def build_system_query(graph_name: str, rsm_id: str) -> str:
+    return f"""
+    SELECT *
+    FROM ag_catalog.cypher('{graph_name}', $$
+        MATCH (r:SYSTEM {{system_rsm_id: "{rsm_id}"}})
+        MATCH p = (r)-[:SYSTEM_HIERARCHY*1..5]->(n)
+        RETURN p, n, id(n)
+    $$) AS (p ag_catalog.agtype, n ag_catalog.agtype, n_id bigint)
+    """
+
+
+def build_module_query(graph_name: str, rsm_id: str) -> str:
+    return f"""
+    SELECT *
+    FROM ag_catalog.cypher('{graph_name}', $$
+        MATCH (r:MODULE {{module_rsm_id: "{rsm_id}"}})
+        MATCH p = (r)-[:SYSTEM_HIERARCHY*1..5]->(n)
+        RETURN p, n, id(n)
+    $$) AS (p ag_catalog.agtype, n ag_catalog.agtype, n_id bigint)
+    """
+
+
+def build_children_query(graph_name: str, vertex_id: int) -> str:
+    return f"""
+    SELECT *
+    FROM ag_catalog.cypher('{graph_name}', $$
+        MATCH (a)-[:SYSTEM_HIERARCHY*]->(b)
+        WHERE id(a) = {vertex_id}
+        RETURN b, id(b)
+    $$) AS (b ag_catalog.agtype, b_id bigint)
+    """
+
+
+async def find_vertex_by_rsm_id(rsm_id: str) -> Optional[tuple[int, dict]]:
+    logger.info(f"Searching for vertex with rsm_id={rsm_id}")
+    
+    pool = get_pool()
+    timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
+    
+    system_query = build_system_find_query(settings.AGE_GRAPH_NAME, rsm_id)
+    try:
+        async with pool.acquire(timeout=timeout) as conn:
+            await conn.execute('SET search_path = ag_catalog, "$user", public;')
+            row = await conn.fetchrow(system_query)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        raise
+    
+    if row and row["r"]:
+        node_data = parse_agtype(str(row["r"]))
+        logger.info(f"Found SYSTEM vertex with rsm_id={rsm_id}, id={row['r_id']}")
+        return (row["r_id"], node_data)
+    
+    module_query = build_module_find_query(settings.AGE_GRAPH_NAME, rsm_id)
+    try:
+        async with pool.acquire(timeout=timeout) as conn:
+            await conn.execute('SET search_path = ag_catalog, "$user", public;')
+            row = await conn.fetchrow(module_query)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        raise
+    
+    if row and row["r"]:
+        node_data = parse_agtype(str(row["r"]))
+        logger.info(f"Found MODULE vertex with rsm_id={rsm_id}, id={row['r_id']}")
+        return (row["r_id"], node_data)
+    
+    logger.info(f"Vertex with rsm_id={rsm_id} not found")
+    return None
+
+
+async def get_hierarchy_tree(vertex_id: int) -> list[dict]:
+    logger.info(f"Fetching hierarchy tree for vertex id={vertex_id}")
+    
+    pool = get_pool()
+    query = build_children_query(settings.AGE_GRAPH_NAME, vertex_id)
+    timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
+    
+    try:
+        async with pool.acquire(timeout=timeout) as conn:
+            await conn.execute('SET search_path = ag_catalog, "$user", public;')
+            rows = await conn.fetch(query)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        raise
+    
+    children = []
+    for row in rows:
+        if row["b"]:
+            node_data = parse_agtype(str(row["b"]))
+            children.append({
+                "id": row["b_id"],
+                "data": node_data,
+            })
+    
+    logger.info(f"Found {len(children)} children in hierarchy tree")
+    return children
+
+
+async def get_direct_children(vertex_id: int) -> list[dict]:
+    """Получить только прямых детей (один уровень)"""
+    logger.info(f"Fetching direct children for vertex id={vertex_id}")
+    
+    pool = get_pool()
+    query = f"""
+    SELECT *
+    FROM ag_catalog.cypher('{settings.AGE_GRAPH_NAME}', $$
+        MATCH (a)-[:SYSTEM_HIERARCHY]->(b)
+        WHERE id(a) = {vertex_id}
+        RETURN b, id(b)
+    $$) AS (b ag_catalog.agtype, b_id bigint)
+    """
+    timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
+    
+    try:
+        async with pool.acquire(timeout=timeout) as conn:
+            await conn.execute('SET search_path = ag_catalog, "$user", public;')
+            rows = await conn.fetch(query)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        raise
+    # Убираем дубли по rsm_id в свойствах
+    seen_rsm_ids = set()
+    children = []
+    for row in rows:
+        if row["b"]:
+            node_data = parse_agtype(str(row["b"]))
+            rsm_id = node_data.get("module_rsm_id") or node_data.get("component_rsm_id") or node_data.get("system_rsm_id")
+            if rsm_id and rsm_id in seen_rsm_ids:
+                continue
+            if rsm_id:
+                seen_rsm_ids.add(rsm_id)
+            children.append({
+                "id": row["b_id"],
+                "data": node_data,
+            })
+    
+    logger.info(f"Found {len(children)} direct children for vertex id={vertex_id}")
+    return children
+
+
+
+
+
+async def build_tree_recursive(vertex_id: int, visited: set) -> list[ChildTreeResponse]:
+    """Рекурсивно строит дерево детей"""
+    children_data = await get_direct_children(vertex_id)
+    result = []
+    
+    for child in children_data:
+        child_id = child["id"]
+        
+        # Если узел уже посещён — пропускаем (не дублируем)
+        if child_id in visited:
+            continue
+        
+        visited.add(child_id)
+        child_properties = {k: v for k, v in child["data"].items() if k != "id"}
+        
+        # Рекурсивно получаем детей этого узла
+        nested_children = await build_tree_recursive(child_id, visited)
+        
+        result.append(ChildTreeResponse(
+            node=ChildNode(
+                properties=child_properties,
+            ),
+            children=nested_children,
+        ))
+    
+    return result
+
+
+async def build_child_tree_by_rsm_id(rsm_id: str) -> Optional[ChildTreeResponse]:
+    vertex_data = await find_vertex_by_rsm_id(rsm_id)
+    
+    if vertex_data is None:
+        return None
+    
+    vertex_id, node_data = vertex_data
+    
+    properties = {k: v for k, v in node_data.items() if k != "id"}
+    
+    child_node = ChildNode(
+        properties=properties,
+    )
+    
+    # Строим дерево рекурсивно
+    visited: set = set()
+    visited.add(vertex_id)  # Добавляем корневой узел
+    children = await build_tree_recursive(vertex_id, visited)
+    
+    return ChildTreeResponse(
+        node=child_node,
+        children=children,
+    )
