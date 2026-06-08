@@ -59,9 +59,27 @@ class SystemSearchListResponse(BaseModel):
 
 
 class DijkstraFilter(BaseModel):
-    system_rsm_id: Optional[str] = None
-    module_rsm_id: Optional[str] = None
-    component_rsm_id: Optional[str] = None
+    system_rsm_id: Optional[str] = Field(
+        None,
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "system_rsm_id",
+            "x-mcp-tool-arg-description": "RSM ID системы для фильтрации",
+        }
+    )
+    module_rsm_id: Optional[str] = Field(
+        None,
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "module_rsm_id",
+            "x-mcp-tool-arg-description": "RSM ID модуля для фильтрации",
+        }
+    )
+    component_rsm_id: Optional[str] = Field(
+        None,
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "component_rsm_id",
+            "x-mcp-tool-arg-description": "RSM ID компонента для фильтрации",
+        }
+    )
 
 
 class DijkstraSortBy(str, Enum):
@@ -72,11 +90,29 @@ class DijkstraSortBy(str, Enum):
 
 
 class DijkstraRequest(BaseModel):
-    start: DijkstraFilter = Field(..., description="Filter for start nodes")
-    finish: DijkstraFilter = Field(..., description="Filter for finish nodes")
+    start: DijkstraFilter = Field(
+        ...,
+        description="Filter for start nodes",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "start",
+            "x-mcp-tool-arg-description": "Фильтр для начальных узлов поиска пути",
+        }
+    )
+    finish: DijkstraFilter = Field(
+        ...,
+        description="Filter for finish nodes",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "finish",
+            "x-mcp-tool-arg-description": "Фильтр для конечных узлов поиска пути",
+        }
+    )
     sort_by: DijkstraSortBy = Field(
         default=DijkstraSortBy.MOST_FREQUENT,
-        description="Sort order: most_frequent, longest, or shortest"
+        description="Sort order: most_frequent, longest, or shortest",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "sort_by",
+            "x-mcp-tool-arg-description": "Порядок сортировки: most_frequent (по частоте), longest (самые длинные), shortest (самые короткие), most_recent (недавние)",
+        }
     )
 
 
@@ -105,9 +141,14 @@ class ChildNode(BaseModel):
     properties: dict = {}
 
 
+class ChildTreeItem(BaseModel):
+    node: ChildNode
+    children: list["ChildTreeItem"] = []
+
+
 class ChildTreeResponse(BaseModel):
     node: ChildNode
-    children: list["ChildTreeResponse"] = []
+    children: list[ChildTreeItem] = []
 
 
-ChildTreeResponse.model_rebuild()
+ChildTreeItem.model_rebuild()

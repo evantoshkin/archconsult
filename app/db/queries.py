@@ -6,7 +6,7 @@ import asyncpg
 
 from app.core.config import settings
 from app.db.pool import get_pool
-from app.schemas.paths import DijkstraFilter, ChildTreeResponse, ChildNode
+from app.schemas.paths import DijkstraFilter, ChildTreeResponse, ChildNode, ChildTreeItem
 
 logger = logging.getLogger(__name__)
 
@@ -809,7 +809,7 @@ async def get_direct_children(vertex_id: int) -> list[dict]:
 
 
 
-async def build_tree_recursive(vertex_id: int, visited: set) -> list[ChildTreeResponse]:
+async def build_tree_recursive(vertex_id: int, visited: set) -> list[ChildTreeItem]:
     """Рекурсивно строит дерево детей"""
     children_data = await get_direct_children(vertex_id)
     result = []
@@ -827,7 +827,7 @@ async def build_tree_recursive(vertex_id: int, visited: set) -> list[ChildTreeRe
         # Рекурсивно получаем детей этого узла
         nested_children = await build_tree_recursive(child_id, visited)
         
-        result.append(ChildTreeResponse(
+        result.append(ChildTreeItem(
             node=ChildNode(
                 properties=child_properties,
             ),

@@ -1,6 +1,6 @@
 import asyncpg
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ from app.schemas.paths import (
     ChildTreeResponse,
 )
 
-router = APIRouter(prefix="/api/v1", tags=["paths"])
+router = APIRouter(prefix="/api/v2", tags=["paths"])
 
 
 @router.post(
@@ -24,6 +24,10 @@ router = APIRouter(prefix="/api/v1", tags=["paths"])
         503: {"description": "Database unavailable"},
         504: {"description": "Database timeout"},
         500: {"description": "Internal server error"},
+    },
+    openapi_extra={
+        "x-mcp-tool-name": "build_path",
+        "x-mcp-tool-description": "Поиск путей интеграции между системами по алгоритму Дейкстры. Возвращает отсортированные маршруты с частотой использования.",
     },
 )
 async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
@@ -137,8 +141,20 @@ async def dijkstra_search(request: DijkstraRequest) -> DijkstraResponse:
         504: {"description": "Database timeout"},
         500: {"description": "Internal server error"},
     },
+    openapi_extra={
+        "x-mcp-tool-name": "get_systemtree",
+        "x-mcp-tool-description": "Получение дерева дочерних объектов по RSM ID. Возвращает иерархическую структуру системы.",
+    },
 )
-async def get_child_tree(rsm_id: str) -> ChildTreeResponse:
+async def get_child_tree(
+    rsm_id: str = Query(
+        ...,
+        openapi_extra={
+            "x-mcp-tool-arg-name": "rsm_id",
+            "x-mcp-tool-arg-description": "RSM ID объекта для получения дерева дочерних элементов",
+        }
+    )
+) -> ChildTreeResponse:
     try:
         result = await build_child_tree_by_rsm_id(rsm_id)
     except asyncpg.PostgresConnectionError as e:
@@ -166,4 +182,7 @@ async def get_child_tree(rsm_id: str) -> ChildTreeResponse:
             detail={"code": "OBJECT_NOT_FOUND", "message": f"Object with rsm_id={rsm_id} not found"},
         )
     
-    return result
+    return ChildTreeResponse(
+        node=result.node,
+        children=result.children,
+    )
