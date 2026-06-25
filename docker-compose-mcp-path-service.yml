@@ -19,6 +19,10 @@ services:
       - PATH_SEARCH_LIMIT=${PATH_SEARCH_LIMIT:-1000}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DB_STATEMENT_TIMEOUT_MS=${DB_STATEMENT_TIMEOUT_MS:-30000}
+      - NEBULA_HOST=${NEBULA_HOST:-graphd}
+      - NEBULA_PORT=${NEBULA_PORT:-9669}
+      - NEBULA_USER=${NEBULA_USER:-root}
+      - NEBULA_PASSWORD=${NEBULA_PASSWORD:-nebula}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

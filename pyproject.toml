@@ -10,6 +10,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
+    "nebula3-python>=3.4.0",
 ]
 
 [project.optional-dependencies]

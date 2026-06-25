@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     AGE_GRAPH_NAME: str = "rsm_eotar_interface"
     PATH_SEARCH_LIMIT: int = 1000
 
+    NEBULA_HOST: str = "localhost"
+    NEBULA_PORT: int = 9670
+    NEBULA_USER: str = "root"
+    NEBULA_PASSWORD: str = "nebula"
+    NEBULA_SPACE: str = "RSM"
+
     LOG_LEVEL: str = "INFO"
     DB_STATEMENT_TIMEOUT_MS: int = 30000
 

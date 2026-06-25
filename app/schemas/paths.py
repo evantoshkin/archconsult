@@ -58,7 +58,7 @@ class SystemSearchListResponse(BaseModel):
     systems: list[SystemSearchResponse]
 
 
-class DijkstraFilter(BaseModel):
+class TraverseFilter(BaseModel):
     system_rsm_id: Optional[str] = Field(
         None,
         json_schema_extra={
@@ -82,15 +82,15 @@ class DijkstraFilter(BaseModel):
     )
 
 
-class DijkstraSortBy(str, Enum):
+class TraverseSortBy(str, Enum):
     MOST_FREQUENT = "most_frequent"
     LONGEST = "longest"
     SHORTEST = "shortest"
     MOST_RECENT = "most_recent"
 
 
-class DijkstraRequest(BaseModel):
-    start: DijkstraFilter = Field(
+class TraverseRequest(BaseModel):
+    start: TraverseFilter = Field(
         ...,
         description="Filter for start nodes",
         json_schema_extra={
@@ -98,7 +98,7 @@ class DijkstraRequest(BaseModel):
             "x-mcp-tool-arg-description": "Фильтр для начальных узлов поиска пути",
         }
     )
-    finish: DijkstraFilter = Field(
+    finish: TraverseFilter = Field(
         ...,
         description="Filter for finish nodes",
         json_schema_extra={
@@ -106,8 +106,8 @@ class DijkstraRequest(BaseModel):
             "x-mcp-tool-arg-description": "Фильтр для конечных узлов поиска пути",
         }
     )
-    sort_by: DijkstraSortBy = Field(
-        default=DijkstraSortBy.MOST_FREQUENT,
+    sort_by: TraverseSortBy = Field(
+        default=TraverseSortBy.MOST_FREQUENT,
         description="Sort order: most_frequent, longest, or shortest",
         json_schema_extra={
             "x-mcp-tool-arg-name": "sort_by",
@@ -116,7 +116,7 @@ class DijkstraRequest(BaseModel):
     )
 
 
-class DijkstraPathNode(BaseModel):
+class TraversePathNode(BaseModel):
     order: int
     system_rsm_id: str
     system_rsm_name: Optional[str] = None
@@ -126,15 +126,62 @@ class DijkstraPathNode(BaseModel):
     component_rsm_name: Optional[str] = None
 
 
-class DijkstraPathGroup(BaseModel):
-    path: list[DijkstraPathNode]
+class TraversePathGroup(BaseModel):
+    path: list[TraversePathNode]
     integration_example_count: int
     eotar_rsm_id: str
     eotar_rsm_date_time: Optional[str] = None
 
 
-class DijkstraResponse(BaseModel):
-    results: list[DijkstraPathGroup]
+class TraverseResponse(BaseModel):
+    results: list[TraversePathGroup]
+
+
+class ExperimentNodePath(BaseModel):
+    system_rsm_id: str
+    system_rsm_name: Optional[str] = None
+    frequency: int = 1
+
+
+class ExperimentNodePaths(BaseModel):
+    incoming: list[ExperimentNodePath] = []
+    outgoing: list[ExperimentNodePath] = []
+
+
+class ExperimentPathSegmentSource(BaseModel):
+    system_rsm_id: str
+    system_rsm_name: Optional[str] = None
+    module_rsm_id: str = ""
+    module_rsm_name: Optional[str] = None
+    component_rsm_id: str = ""
+    component_rsm_name: Optional[str] = None
+    paths: Optional[ExperimentNodePaths] = None
+
+
+class ExperimentPathSegmentDestination(BaseModel):
+    system_rsm_id: str
+    system_rsm_name: Optional[str] = None
+    module_rsm_id: str = ""
+    module_rsm_name: Optional[str] = None
+    component_rsm_id: str = ""
+    component_rsm_name: Optional[str] = None
+    paths: Optional[ExperimentNodePaths] = None
+
+
+class ExperimentPathSegment(BaseModel):
+    source: ExperimentPathSegmentSource
+    destination: ExperimentPathSegmentDestination
+
+
+class ExperimentPathGroup(BaseModel):
+    segments: list[ExperimentPathSegment]
+    frequency: int
+    eotar_rsm_id: str
+    eotar_rsm_date_time: Optional[str] = None
+
+
+class ExperimentResponse(BaseModel):
+    results: list[ExperimentPathGroup]
 
 
 class ChildNode(BaseModel):

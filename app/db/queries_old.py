@@ -6,7 +6,7 @@ import asyncpg
 
 from app.core.config import settings
 from app.db.pool import get_pool
-from app.schemas.paths import TraverseFilter, ChildTreeResponse, ChildNode, ChildTreeItem
+from app.schemas.paths import TraverseFilter, ChildTreeResponse, ChildNode
 
 logger = logging.getLogger(__name__)
 
@@ -724,11 +724,49 @@ async def find_vertex_by_rsm_id(rsm_id: str) -> Optional[tuple[int, dict]]:
     return None
 
 
+async def get_children(vertex_id: int) -> list[dict]:
+    logger.info(f"Fetching children for vertex id={vertex_id}")
+    
+    pool = get_pool()
+    query = build_children_query(settings.AGE_GRAPH_NAME, vertex_id)
+    timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
+    
+    try:
+        async with pool.acquire(timeout=timeout) as conn:
+            await conn.execute('SET search_path = ag_catalog, "$user", public;')
+            rows = await conn.fetch(query)
+    except asyncpg.PostgresConnectionError as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    except asyncpg.QueryCanceledError as e:
+        logger.error(f"Database query timeout: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        raise
+    
+    children = []
+    for row in rows:
+        if row["b"]:
+            raw_data = str(row["b"])
+            logger.info(f"Raw agtype data for child: {raw_data[:500]}")
+            node_data = parse_agtype(raw_data)
+            logger.info(f"Parsed node data: {node_data}")
+            children.append({
+                "id": row["b_id"],
+                "data": node_data,
+                "raw": raw_data,
+            })
+    
+    logger.info(f"Found {len(children)} children for vertex id={vertex_id}")
+    return children
+
+
 async def get_hierarchy_tree(vertex_id: int) -> list[dict]:
     logger.info(f"Fetching hierarchy tree for vertex id={vertex_id}")
     
     pool = get_pool()
-    query = build_children_query(settings.AGE_GRAPH_NAME, vertex_id)
+    query = build_hierarchy_tree_query(settings.AGE_GRAPH_NAME, vertex_id)
     timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
     
     try:
@@ -758,85 +796,6 @@ async def get_hierarchy_tree(vertex_id: int) -> list[dict]:
     return children
 
 
-async def get_direct_children(vertex_id: int) -> list[dict]:
-    """Получить только прямых детей (один уровень)"""
-    logger.info(f"Fetching direct children for vertex id={vertex_id}")
-    
-    pool = get_pool()
-    query = f"""
-    SELECT *
-    FROM ag_catalog.cypher('{settings.AGE_GRAPH_NAME}', $$
-        MATCH (a)-[:SYSTEM_HIERARCHY]->(b)
-        WHERE id(a) = {vertex_id}
-        RETURN b, id(b)
-    $$) AS (b ag_catalog.agtype, b_id bigint)
-    """
-    timeout = settings.DB_STATEMENT_TIMEOUT_MS / 1000.0
-    
-    try:
-        async with pool.acquire(timeout=timeout) as conn:
-            await conn.execute('SET search_path = ag_catalog, "$user", public;')
-            rows = await conn.fetch(query)
-    except asyncpg.PostgresConnectionError as e:
-        logger.error(f"Database connection error: {e}")
-        raise
-    except asyncpg.QueryCanceledError as e:
-        logger.error(f"Database query timeout: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Database query error: {e}")
-        raise
-    # Убираем дубли по rsm_id в свойствах
-    seen_rsm_ids = set()
-    children = []
-    for row in rows:
-        if row["b"]:
-            node_data = parse_agtype(str(row["b"]))
-            rsm_id = node_data.get("module_rsm_id") or node_data.get("component_rsm_id") or node_data.get("system_rsm_id")
-            if rsm_id and rsm_id in seen_rsm_ids:
-                continue
-            if rsm_id:
-                seen_rsm_ids.add(rsm_id)
-            children.append({
-                "id": row["b_id"],
-                "data": node_data,
-            })
-    
-    logger.info(f"Found {len(children)} direct children for vertex id={vertex_id}")
-    return children
-
-
-
-
-
-async def build_tree_recursive(vertex_id: int, visited: set) -> list[ChildTreeItem]:
-    """Рекурсивно строит дерево детей"""
-    children_data = await get_direct_children(vertex_id)
-    result = []
-    
-    for child in children_data:
-        child_id = child["id"]
-        
-        # Если узел уже посещён — пропускаем (не дублируем)
-        if child_id in visited:
-            continue
-        
-        visited.add(child_id)
-        child_properties = {k: v for k, v in child["data"].items() if k != "id"}
-        
-        # Рекурсивно получаем детей этого узла
-        nested_children = await build_tree_recursive(child_id, visited)
-        
-        result.append(ChildTreeItem(
-            node=ChildNode(
-                properties=child_properties,
-            ),
-            children=nested_children,
-        ))
-    
-    return result
-
-
 async def build_child_tree_by_rsm_id(rsm_id: str) -> Optional[ChildTreeResponse]:
     vertex_data = await find_vertex_by_rsm_id(rsm_id)
     
@@ -851,10 +810,18 @@ async def build_child_tree_by_rsm_id(rsm_id: str) -> Optional[ChildTreeResponse]
         properties=properties,
     )
     
-    # Строим дерево рекурсивно
-    visited: set = set()
-    visited.add(vertex_id)  # Добавляем корневой узел
-    children = await build_tree_recursive(vertex_id, visited)
+    children_data = await get_children(vertex_id)
+    children = []
+    
+    for child in children_data:
+        child_properties = {k: v for k, v in child["data"].items() if k != "id"}
+        
+        children.append(ChildTreeResponse(
+            node=ChildNode(
+                properties=child_properties,
+            ),
+            children=[],
+        ))
     
     return ChildTreeResponse(
         node=child_node,
