@@ -68,24 +68,24 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
     source_result["incoming"] = sorted(source_incoming_map.values(), key=lambda x: -x["frequency"])
     
     source_outgoing_map: dict[str, dict] = {}
-    source_outgoing_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS dst_id, $$.SYSTEM.name AS dst_name'
+    source_outgoing_query = f'GO 1 STEPS FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
     logger.info(f"Fetching outgoing paths for source node {source_node}")
     source_outgoing_result = session.execute(source_outgoing_query)
     
     if source_outgoing_result.is_succeeded():
         for row_idx in range(source_outgoing_result.row_size()):
             row = source_outgoing_result.row_values(row_idx)
-            dst_id = str(row[0]).strip('"') if row[0] else None
+            src_id = str(row[0]).strip('"') if row[0] else None
             system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
             
-            if dst_id and dst_id != source_node and dst_id != dest_node:
-                if dst_id not in source_outgoing_map:
-                    source_outgoing_map[dst_id] = {
-                        "system_rsm_id": dst_id,
+            if src_id and src_id != source_node and src_id != dest_node:
+                if src_id not in source_outgoing_map:
+                    source_outgoing_map[src_id] = {
+                        "system_rsm_id": src_id,
                         "system_rsm_name": system_name,
                         "frequency": 0,
                     }
-                source_outgoing_map[dst_id]["frequency"] += 1
+                source_outgoing_map[src_id]["frequency"] += 1
     source_result["outgoing"] = sorted(source_outgoing_map.values(), key=lambda x: -x["frequency"])
     
     dest_incoming_map: dict[str, dict] = {}
