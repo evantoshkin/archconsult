@@ -125,6 +125,17 @@ class TraverseRequest(BaseModel):
         }
     )
 
+    depth_days: int = Field(
+        ...,
+        ge=1,
+        le=365,
+        description="Depth of search in days",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "depth_days",
+            "x-mcp-tool-arg-description": "Количество дней глубины поиска (от 1 до 365)",
+        }
+    )
+
 
 class TraversePathNode(BaseModel):
     order: int
@@ -195,7 +206,10 @@ class ExperimentResponse(BaseModel):
 
 
 class ChildNode(BaseModel):
-    properties: dict = {}
+    label: str = ""
+    other_info: dict = {}
+    rsm_id: str = ""
+    rsm_name: Optional[str] = None
 
 
 class ChildTreeItem(BaseModel):

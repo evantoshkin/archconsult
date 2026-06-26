@@ -15,6 +15,8 @@ from app.schemas.paths import (
     TraversePathNode,
     TraverseSortBy,
     ChildTreeResponse,
+    ChildNode,
+    ChildTreeItem,
     ExperimentResponse,
     ExperimentPathGroup,
     ExperimentPathSegment,
@@ -305,7 +307,7 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
     },
     openapi_extra={
         "x-mcp-tool-name": "get_systemtree",
-        "x-mcp-tool-description": "Получение дерева дочерних объектов по RSM ID. Возвращает иерархическую структуру системы.",
+        "x-mcp-tool-description": "Получение дерева дочерних объектов по RSM ID из NebulaGraph. Возвращает иерархическую структуру системы.",
     },
 )
 async def get_child_tree(
@@ -317,26 +319,9 @@ async def get_child_tree(
         }
     )
 ) -> ChildTreeResponse:
-    try:
-        result = await build_child_tree_by_rsm_id(rsm_id)
-    except asyncpg.PostgresConnectionError as e:
-        logger.error(f"Database connection error: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database connection error"},
-        )
-    except asyncpg.QueryCanceledError as e:
-        logger.error(f"Database query timeout: {e}")
-        raise HTTPException(
-            status_code=504,
-            detail={"code": "DATABASE_TIMEOUT", "message": "Database query timeout"},
-        )
-    except Exception as e:
-        logger.error(f"Internal error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "INTERNAL_SERVER_ERROR", "message": str(e)},
-        )
+    from app.db.nebula_queries import fetch_child_tree_from_nebula
+    
+    result = await fetch_child_tree_from_nebula(rsm_id)
     
     if result is None:
         raise HTTPException(
@@ -345,8 +330,8 @@ async def get_child_tree(
         )
     
     return ChildTreeResponse(
-        node=result.node,
-        children=result.children,
+        node=ChildNode(**result["node"]),
+        children=[ChildTreeItem(**child) for child in result["children"]],
     )
 
 

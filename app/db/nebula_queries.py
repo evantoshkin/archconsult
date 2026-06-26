@@ -59,7 +59,12 @@ async def fetch_node_paths_with_document_id(
 async def execute_nebula_experiment_search(
     start_filter: TraverseFilter,
     finish_filter: TraverseFilter,
+    depth_days: int,
 ) -> dict[str, dict[str, dict]]:
+    from datetime import datetime, timedelta
+    
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+    logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
     pool = get_nebula_pool()
     
     session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
@@ -92,6 +97,7 @@ async def execute_nebula_experiment_search(
         
         edges_query = f"""
         GO FROM "{start_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL
+        WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
         YIELD 
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS document_id,
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS document_date,
@@ -168,6 +174,7 @@ async def execute_nebula_experiment_search(
         if finish_filter.system_rsm_id:
             incoming_query = f"""
             GO FROM "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY
+            WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
             YIELD 
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS document_id,
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS document_date,
@@ -246,7 +253,7 @@ async def execute_nebula_experiment_search(
         
         for document_id in matching_document_ids:
             clean_document_id = document_id.strip('"')
-            path_query = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" YIELD path AS p'
+            path_query = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
             
             logger.info(f"Executing path query for document_id {document_id}: {path_query}")
             path_result = session.execute(path_query)
@@ -283,7 +290,7 @@ async def execute_nebula_experiment_search(
                         for i in range(len(nodes) - 1):
                             from_node = nodes[i]
                             to_node = nodes[i + 1]
-                            edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
+                            edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
                             
                             logger.info(f"Executing edge query: {edge_query}")
                             edge_result = session.execute(edge_query)
@@ -393,6 +400,7 @@ async def execute_nebula_traverse_search(
         
         edges_query = f"""
         GO FROM "{start_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL
+        WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
         YIELD 
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS eotar_id,
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS eotar_date,
@@ -469,6 +477,7 @@ async def execute_nebula_traverse_search(
         if finish_filter.system_rsm_id:
             incoming_query = f"""
             GO FROM "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY
+            WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
             YIELD 
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS eotar_id,
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS eotar_date,
@@ -749,5 +758,112 @@ async def fetch_nebula_node_names(
     except Exception as e:
         logger.error(f"NebulaGraph node names fetch error: {e}")
         return {}
+    finally:
+        session.release()
+
+
+
+async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
+    """
+    Fetch child tree from NebulaGraph using hierarchy edges.
+    Returns a tree structure with node and children.
+    """
+    pool = get_nebula_pool()
+    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+    
+    try:
+        result = session.execute(f'USE {settings.NEBULA_SPACE};')
+        if not result.is_succeeded():
+            logger.error(f"Failed to use space {settings.NEBULA_SPACE}: {result.error_msg()}")
+            return None
+        
+        # Check if node exists and get its properties
+        check_query = f'FETCH PROP ON * "{rsm_id}" YIELD vertex AS v'
+        check_result = session.execute(check_query)
+        
+        if not check_result.is_succeeded() or check_result.row_size() == 0:
+            logger.info(f"Node {rsm_id} not found")
+            return None
+        
+        import re
+        
+        # Get node properties
+        row = check_result.row_values(0)
+        vertex_str = str(row[0]) if row[0] else ""
+        
+        node_label = ""
+        node_rsm_name = None
+        
+        # Extract label from vertex string (e.g., :SYSTEM, :MODULE, :COMPONENT)
+        label_match = re.search(r':([A-Za-z]+)\{', vertex_str)
+        if label_match:
+            node_label = label_match.group(1)
+        
+        # Extract name property
+        name_match = re.search(r'name:\s*"([^"]*)"', vertex_str)
+        if name_match:
+            node_rsm_name = name_match.group(1)
+        
+        # Extract all properties for other_info
+        other_info = {}
+        props_match = re.findall(r'([A-Za-z_]+):\s*"([^"]*)"', vertex_str)
+        for prop_name, prop_value in props_match:
+            other_info[prop_name] = prop_value
+        
+        # Get children via hierarchy edge (REVERSELY - nodes that point TO rsm_id via hierarchy)
+        children_query = f'GO FROM "{rsm_id}" OVER HIERARCHY REVERSELY YIELD id($$) AS child_id, $$ AS child_vertex'
+        children_result = session.execute(children_query)
+        
+        children = []
+        if children_result.is_succeeded():
+            for row_idx in range(children_result.row_size()):
+                row = children_result.row_values(row_idx)
+                child_id = str(row[0]).strip('"') if row[0] else None
+                child_vertex = str(row[1]) if row[1] else ""
+                
+                if child_id:
+                    # Extract label
+                    child_label = ""
+                    label_match = re.search(r':([A-Za-z]+)\{', child_vertex)
+                    if label_match:
+                        child_label = label_match.group(1)
+                    
+                    # Extract name
+                    child_name = None
+                    name_match = re.search(r'name:\s*"([^"]*)"', child_vertex)
+                    if name_match:
+                        child_name = name_match.group(1)
+                    
+                    # Extract all properties for other_info
+                    child_other_info = {}
+                    props_match = re.findall(r'([A-Za-z_]+):\s*"([^"]*)"', child_vertex)
+                    for prop_name, prop_value in props_match:
+                        child_other_info[prop_name] = prop_value
+                    
+                    children.append({
+                        "node": {
+                            "label": child_label,
+                            "other_info": child_other_info,
+                            "rsm_id": child_id,
+                            "rsm_name": child_name,
+                        },
+                        "children": []
+                    })
+        
+        logger.info(f"Found {len(children)} children for node {rsm_id}")
+        
+        return {
+            "node": {
+                "label": node_label,
+                "other_info": other_info,
+                "rsm_id": rsm_id,
+                "rsm_name": node_rsm_name,
+            },
+            "children": children
+        }
+        
+    except Exception as e:
+        logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
+        return None
     finally:
         session.release()
