@@ -65,7 +65,7 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
                         "frequency": 0,
                     }
                 source_incoming_map[src_id]["frequency"] += 1
-    source_result["incoming"] = sorted(source_incoming_map.values(), key=lambda x: -x["frequency"])
+    source_result["incoming"] = sorted(source_incoming_map.values(), key=lambda x: -x["frequency"])[:3]
     
     source_outgoing_map: dict[str, dict] = {}
     source_outgoing_query = f'GO 1 STEPS FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
@@ -86,7 +86,7 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
                         "frequency": 0,
                     }
                 source_outgoing_map[src_id]["frequency"] += 1
-    source_result["outgoing"] = sorted(source_outgoing_map.values(), key=lambda x: -x["frequency"])
+    source_result["outgoing"] = sorted(source_outgoing_map.values(), key=lambda x: -x["frequency"])[:3]
     
     dest_incoming_map: dict[str, dict] = {}
     dest_incoming_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
@@ -106,7 +106,7 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
                         "system_rsm_name": system_name,
                         "frequency": 0,
                     }
-                dest_incoming_map[src_id]["frequency"] += 1
+    dest_result["incoming"] = sorted(dest_incoming_map.values(), key=lambda x: -x["frequency"])[:3]
     dest_result["incoming"] = sorted(dest_incoming_map.values(), key=lambda x: -x["frequency"])
     
     dest_outgoing_map: dict[str, dict] = {}
@@ -128,7 +128,7 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
                         "frequency": 0,
                     }
                 dest_outgoing_map[src_id]["frequency"] += 1
-    dest_result["outgoing"] = sorted(dest_outgoing_map.values(), key=lambda x: -x["frequency"])
+    dest_result["outgoing"] = sorted(dest_outgoing_map.values(), key=lambda x: -x["frequency"])[:3]
     
     return source_result, dest_result
 
