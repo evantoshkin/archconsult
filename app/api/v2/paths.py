@@ -353,6 +353,7 @@ async def experiment_search(request: TraverseRequest) -> ExperimentResponse:
         results = await execute_nebula_experiment_search(
             start_filter=request.start,
             finish_filter=request.finish,
+            depth_days=request.depth_days,
         )
     except Exception as e:
         logger.error(f"NebulaGraph search error: {e}")
