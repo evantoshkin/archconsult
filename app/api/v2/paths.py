@@ -156,6 +156,7 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
         results = await execute_nebula_traverse_search(
             start_filter=request.start,
             finish_filter=request.finish,
+            depth_days=request.depth_days,
         )
     except Exception as e:
         logger.error(f"NebulaGraph search error: {e}")

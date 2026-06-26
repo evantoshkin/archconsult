@@ -376,7 +376,13 @@ async def execute_nebula_experiment_search(
 async def execute_nebula_traverse_search(
     start_filter: TraverseFilter,
     finish_filter: TraverseFilter,
+    depth_days: int = 365,
 ) -> dict[str, dict[str, dict]]:
+    from datetime import datetime, timedelta
+    
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+    logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
+    
     pool = get_nebula_pool()
     
     session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
