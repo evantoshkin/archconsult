@@ -334,7 +334,7 @@ async def execute_nebula_experiment_search(
                 
                 results[document_id] = {
                     "paths": paths_for_document,
-                    "eotar_rsm_date_time": latest_date,
+                    "document_rsm_date_time": latest_date,
                     "consumer_module_id": consumer_module_id or "",
                     "provider_module_id": provider_module_id or "",
                     "consumer_component_id": consumer_component_id or "",
@@ -635,7 +635,7 @@ async def execute_nebula_traverse_search(
                 
                 results[eotar_id] = {
                     "paths": paths_for_eotar,
-                    "eotar_rsm_date_time": latest_date,
+                    "document_rsm_date_time": latest_date,
                     "consumer_module_id": consumer_module_id or "",
                     "provider_module_id": provider_module_id or "",
                     "consumer_component_id": consumer_component_id or "",

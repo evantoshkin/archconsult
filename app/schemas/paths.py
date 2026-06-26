@@ -12,7 +12,7 @@ class PathSearchResponse(BaseModel):
     path_length: int
     path: str
     frequency: int
-    example_eotar_rsm_id: Optional[str] = None
+    example_document_rsm_id: Optional[str] = None
 
 
 class PathNotFoundError(BaseModel):
@@ -139,8 +139,8 @@ class TraversePathNode(BaseModel):
 class TraversePathGroup(BaseModel):
     path: list[TraversePathNode]
     integration_example_count: int
-    eotar_rsm_id: str
-    eotar_rsm_date_time: Optional[str] = None
+    document_rsm_id: str
+    document_rsm_date_time: Optional[str] = None
 
 
 class TraverseResponse(BaseModel):
@@ -186,8 +186,8 @@ class ExperimentPathSegment(BaseModel):
 class ExperimentPathGroup(BaseModel):
     segments: list[ExperimentPathSegment]
     frequency: int
-    eotar_rsm_id: str
-    eotar_rsm_date_time: Optional[str] = None
+    document_rsm_id: str
+    document_rsm_date_time: Optional[str] = None
 
 
 class ExperimentResponse(BaseModel):

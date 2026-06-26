@@ -203,14 +203,14 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
                 path_data_map[path_key] = {
                     "path": data["path"],
                     "edge_data": data.get("edge_data", []),
-                    "eotar_rsm_date_time": result_data.get("eotar_rsm_date_time"),
+                    "document_rsm_date_time": result_data.get("document_rsm_date_time"),
                 }
             path_eotar_map[path_key].add(clean_eotar_id)
             
-            existing_date = path_data_map[path_key].get("eotar_rsm_date_time")
-            new_date = result_data.get("eotar_rsm_date_time")
+            existing_date = path_data_map[path_key].get("document_rsm_date_time")
+            new_date = result_data.get("document_rsm_date_time")
             if new_date and (not existing_date or new_date > existing_date):
-                path_data_map[path_key]["eotar_rsm_date_time"] = new_date
+                path_data_map[path_key]["document_rsm_date_time"] = new_date
     
     path_groups: dict[tuple, dict] = {}
     
@@ -258,8 +258,8 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
         path_groups[path_key] = {
             "path": named_path,
             "integration_example_count": len(eotar_ids),
-            "eotar_rsm_id": first_eotar_id,
-            "eotar_rsm_date_time": data.get("eotar_rsm_date_time"),
+            "document_rsm_id": first_eotar_id,
+            "document_rsm_date_time": data.get("document_rsm_date_time"),
         }
     
     if request.sort_by == TraverseSortBy.MOST_FREQUENT:
@@ -280,7 +280,7 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
     elif request.sort_by == TraverseSortBy.MOST_RECENT:
         sorted_paths = sorted(
             path_groups.values(),
-            key=lambda x: (x.get("eotar_rsm_date_time") is None, x.get("eotar_rsm_date_time") or "", -x["integration_example_count"]),
+            key=lambda x: (x.get("document_rsm_date_time") is None, x.get("document_rsm_date_time") or "", -x["integration_example_count"]),
             reverse=True
         )
     else:
@@ -417,14 +417,14 @@ async def experiment_search(request: TraverseRequest) -> ExperimentResponse:
                 path_data_map[path_key] = {
                     "path": data["path"],
                     "edge_data": data.get("edge_data", []),
-                    "eotar_rsm_date_time": result_data.get("eotar_rsm_date_time"),
+                    "document_rsm_date_time": result_data.get("document_rsm_date_time"),
                 }
             path_eotar_map[path_key].add(clean_eotar_id)
             
-            existing_date = path_data_map[path_key].get("eotar_rsm_date_time")
-            new_date = result_data.get("eotar_rsm_date_time")
+            existing_date = path_data_map[path_key].get("document_rsm_date_time")
+            new_date = result_data.get("document_rsm_date_time")
             if new_date and (not existing_date or new_date > existing_date):
-                path_data_map[path_key]["eotar_rsm_date_time"] = new_date
+                path_data_map[path_key]["document_rsm_date_time"] = new_date
     
     path_groups: dict[tuple, dict] = {}
     
@@ -502,8 +502,8 @@ async def experiment_search(request: TraverseRequest) -> ExperimentResponse:
             path_groups[path_key] = {
                 "segments": segments,
                 "frequency": len(eotar_ids),
-                "eotar_rsm_id": first_eotar_id,
-                "eotar_rsm_date_time": data.get("eotar_rsm_date_time"),
+                "document_rsm_id": first_eotar_id,
+                "document_rsm_date_time": data.get("document_rsm_date_time"),
             }
     finally:
         session.release()
@@ -526,7 +526,7 @@ async def experiment_search(request: TraverseRequest) -> ExperimentResponse:
     elif request.sort_by == TraverseSortBy.MOST_RECENT:
         sorted_paths = sorted(
             path_groups.values(),
-            key=lambda x: (x.get("eotar_rsm_date_time") is None, x.get("eotar_rsm_date_time") or "", -x["frequency"]),
+            key=lambda x: (x.get("document_rsm_date_time") is None, x.get("document_rsm_date_time") or "", -x["frequency"]),
             reverse=True
         )
     else:
