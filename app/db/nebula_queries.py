@@ -253,77 +253,92 @@ async def execute_nebula_experiment_search(
         
         for document_id in matching_document_ids:
             clean_document_id = document_id.strip('"')
-            path_query = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
-            
-            logger.info(f"Executing path query for document_id {document_id}: {path_query}")
-            path_result = session.execute(path_query)
-            
-            if not path_result.is_succeeded():
-                logger.error(f"Path query failed for document_id {document_id}: {path_result.error_msg()}")
-                continue
             
             paths_for_document: dict[str, dict] = {}
             
-            for row_index in range(path_result.row_size()):
-                row = path_result.row_values(row_index)
+            def process_path_result(path_result, direction: str):
+                if not path_result.is_succeeded():
+                    logger.error(f"Path query ({direction}) failed for document_id {document_id}: {path_result.error_msg()}")
+                    return
                 
-                if len(row) < 1:
-                    continue
-                
-                path = row[0] if row[0] else None
-                if path:
-                    path_str = str(path)
+                for row_index in range(path_result.row_size()):
+                    row = path_result.row_values(row_index)
                     
-                    nodes = []
-                    if "->" in path_str:
-                        parts = path_str.split("->")
-                        for part in parts:
-                            if '"' in part:
-                                node_id = part.split('"')[1] if '"' in part else ""
-                                if node_id:
-                                    nodes.append(node_id)
+                    if len(row) < 1:
+                        continue
                     
-                    path_key = tuple(nodes)
-                    
-                    if path_key not in paths_for_document:
-                        edge_data_list = []
-                        for i in range(len(nodes) - 1):
-                            from_node = nodes[i]
-                            to_node = nodes[i + 1]
-                            edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
-                            
-                            logger.info(f"Executing edge query: {edge_query}")
-                            edge_result = session.execute(edge_query)
-                            
-                            found = False
-                            if edge_result.is_succeeded():
-                                for row_idx in range(edge_result.row_size()):
-                                    edge_row = edge_result.row_values(row_idx)
-                                    target_vertex = str(edge_row[4]) if edge_row[4] else ""
-                                    
-                                    if to_node in target_vertex:
-                                        edge_data_list.append({
-                                            "consumer_module_id": str(edge_row[0]).strip('"') if edge_row[0] and str(edge_row[0]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                        })
-                                        found = True
-                                        break
-                            
-                            if not found:
-                                edge_data_list.append({
-                                    "consumer_module_id": "",
-                                    "provider_module_id": "",
-                                    "consumer_component_id": "",
-                                    "provider_component_id": "",
-                                })
+                    path = row[0] if row[0] else None
+                    if path:
+                        path_str = str(path)
                         
-                        paths_for_document[path_key] = {
-                            "path": nodes,
-                            "distance": len(nodes),
-                            "edge_data": edge_data_list,
-                        }
+                        nodes = []
+                        if "->" in path_str:
+                            parts = path_str.split("->")
+                            for part in parts:
+                                if '"' in part:
+                                    node_id = part.split('"')[1] if '"' in part else ""
+                                    if node_id:
+                                        nodes.append(node_id)
+                        
+                        path_key = tuple(nodes)
+                        
+                        if path_key not in paths_for_document:
+                            edge_data_list = []
+                            for i in range(len(nodes) - 1):
+                                from_node = nodes[i]
+                                to_node = nodes[i + 1]
+                                
+                                if direction == "forward":
+                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
+                                else:
+                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
+                                
+                                logger.info(f"Executing edge query ({direction}): {edge_query}")
+                                edge_result = session.execute(edge_query)
+                                
+                                found = False
+                                if edge_result.is_succeeded():
+                                    for row_idx in range(edge_result.row_size()):
+                                        edge_row = edge_result.row_values(row_idx)
+                                        target_vertex = str(edge_row[4]) if edge_row[4] else ""
+                                        
+                                        if to_node in target_vertex:
+                                            edge_data_list.append({
+                                                "consumer_module_id": str(edge_row[0]).strip('"') if edge_row[0] and str(edge_row[0]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                                "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                                "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                                "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                            })
+                                            found = True
+                                            break
+                                
+                                if not found:
+                                    edge_data_list.append({
+                                        "consumer_module_id": "",
+                                        "provider_module_id": "",
+                                        "consumer_component_id": "",
+                                        "provider_component_id": "",
+                                    })
+                            
+                            paths_for_document[path_key] = {
+                                "path": nodes,
+                                "distance": len(nodes),
+                                "edge_data": edge_data_list,
+                            }
+            
+            # Query 1: Direct edges (forward direction)
+            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
+            
+            logger.info(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
+            path_result_forward = session.execute(path_query_forward)
+            process_path_result(path_result_forward, "forward")
+            
+            # Query 2: Reverse edges (reverse direction)
+            path_query_reverse = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
+            
+            logger.info(f"Executing reverse path query for document_id {document_id}: {path_query_reverse}")
+            path_result_reverse = session.execute(path_query_reverse)
+            process_path_result(path_result_reverse, "reverse")
             
             if paths_for_document:
                 out_data = outgoing_document_data.get(document_id, {})
@@ -771,6 +786,57 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
     pool = get_nebula_pool()
     session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
     
+    def parse_vertex(vertex_str: str) -> dict:
+        """Parse vertex string and extract label and name."""
+        import re
+        
+        label = ""
+        name = None
+        
+        # Extract label from vertex string (e.g., :SYSTEM, :MODULE, :COMPONENT)
+        label_match = re.search(r':([A-Za-z]+)[{]', vertex_str)
+        if label_match:
+            label = label_match.group(1)
+        
+        # Extract name property
+        name_match = re.search(r'name:\s*"([^"]*)"', vertex_str)
+        if name_match:
+            name = name_match.group(1)
+        
+        return {
+            "label": label,
+            "rsm_name": name,
+        }
+    
+    def fetch_children_recursive(node_id: str, visited: set) -> list:
+        """Recursively fetch children for a node."""
+        if node_id in visited:
+            return []
+        visited.add(node_id)
+        
+        children_query = f'GO FROM "{node_id}" OVER HIERARCHY REVERSELY YIELD id($$) AS child_id, $$ AS child_vertex'
+        children_result = session.execute(children_query)
+        
+        children = []
+        if children_result.is_succeeded():
+            for row_idx in range(children_result.row_size()):
+                row = children_result.row_values(row_idx)
+                child_id = str(row[0]).strip('"') if row[0] else None
+                child_vertex = str(row[1]) if row[1] else ""
+                
+                if child_id and child_id not in visited:
+                    parsed = parse_vertex(child_vertex)
+                    children.append({
+                        "node": {
+                            "label": parsed["label"],
+                            "rsm_id": child_id,
+                            "rsm_name": parsed["rsm_name"],
+                        },
+                        "children": fetch_children_recursive(child_id, visited)
+                    })
+        
+        return children
+    
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -785,79 +851,22 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
             logger.info(f"Node {rsm_id} not found")
             return None
         
-        import re
-        
         # Get node properties
         row = check_result.row_values(0)
         vertex_str = str(row[0]) if row[0] else ""
+        parsed = parse_vertex(vertex_str)
         
-        node_label = ""
-        node_rsm_name = None
+        # Fetch children recursively
+        visited = set()
+        children = fetch_children_recursive(rsm_id, visited)
         
-        # Extract label from vertex string (e.g., :SYSTEM, :MODULE, :COMPONENT)
-        label_match = re.search(r':([A-Za-z]+)\{', vertex_str)
-        if label_match:
-            node_label = label_match.group(1)
-        
-        # Extract name property
-        name_match = re.search(r'name:\s*"([^"]*)"', vertex_str)
-        if name_match:
-            node_rsm_name = name_match.group(1)
-        
-        # Extract all properties for other_info
-        other_info = {}
-        props_match = re.findall(r'([A-Za-z_]+):\s*"([^"]*)"', vertex_str)
-        for prop_name, prop_value in props_match:
-            other_info[prop_name] = prop_value
-        
-        # Get children via hierarchy edge (REVERSELY - nodes that point TO rsm_id via hierarchy)
-        children_query = f'GO FROM "{rsm_id}" OVER HIERARCHY REVERSELY YIELD id($$) AS child_id, $$ AS child_vertex'
-        children_result = session.execute(children_query)
-        
-        children = []
-        if children_result.is_succeeded():
-            for row_idx in range(children_result.row_size()):
-                row = children_result.row_values(row_idx)
-                child_id = str(row[0]).strip('"') if row[0] else None
-                child_vertex = str(row[1]) if row[1] else ""
-                
-                if child_id:
-                    # Extract label
-                    child_label = ""
-                    label_match = re.search(r':([A-Za-z]+)\{', child_vertex)
-                    if label_match:
-                        child_label = label_match.group(1)
-                    
-                    # Extract name
-                    child_name = None
-                    name_match = re.search(r'name:\s*"([^"]*)"', child_vertex)
-                    if name_match:
-                        child_name = name_match.group(1)
-                    
-                    # Extract all properties for other_info
-                    child_other_info = {}
-                    props_match = re.findall(r'([A-Za-z_]+):\s*"([^"]*)"', child_vertex)
-                    for prop_name, prop_value in props_match:
-                        child_other_info[prop_name] = prop_value
-                    
-                    children.append({
-                        "node": {
-                            "label": child_label,
-                            "other_info": child_other_info,
-                            "rsm_id": child_id,
-                            "rsm_name": child_name,
-                        },
-                        "children": []
-                    })
-        
-        logger.info(f"Found {len(children)} children for node {rsm_id}")
+        logger.info(f"Found {len(children)} direct children for node {rsm_id}")
         
         return {
             "node": {
-                "label": node_label,
-                "other_info": other_info,
+                "label": parsed["label"],
                 "rsm_id": rsm_id,
-                "rsm_name": node_rsm_name,
+                "rsm_name": parsed["rsm_name"],
             },
             "children": children
         }
