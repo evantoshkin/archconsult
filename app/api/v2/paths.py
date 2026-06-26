@@ -290,7 +290,7 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
         )
     
     return TraverseResponse(
-        results=[TraversePathGroup(**p) for p in sorted_paths]
+        paths=[TraversePathGroup(**p) for p in sorted_paths[:request.path_count]]
     )
 
 
@@ -536,5 +536,5 @@ async def experiment_search(request: TraverseRequest) -> ExperimentResponse:
         )
     
     return ExperimentResponse(
-        results=[ExperimentPathGroup(**p) for p in sorted_paths]
+        paths=[ExperimentPathGroup(**p) for p in sorted_paths[:request.path_count]]
     )

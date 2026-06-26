@@ -114,6 +114,16 @@ class TraverseRequest(BaseModel):
             "x-mcp-tool-arg-description": "Порядок сортировки: most_frequent (по частоте), longest (самые длинные), shortest (самые короткие), most_recent (недавние)",
         }
     )
+    path_count: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of paths to return",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "path_count",
+            "x-mcp-tool-arg-description": "Количество путей в ответе (от 1 до 100)",
+        }
+    )
 
 
 class TraversePathNode(BaseModel):
@@ -134,7 +144,7 @@ class TraversePathGroup(BaseModel):
 
 
 class TraverseResponse(BaseModel):
-    results: list[TraversePathGroup]
+    paths: list[TraversePathGroup]
 
 
 class ExperimentNodePath(BaseModel):
@@ -181,7 +191,7 @@ class ExperimentPathGroup(BaseModel):
 
 
 class ExperimentResponse(BaseModel):
-    results: list[ExperimentPathGroup]
+    paths: list[ExperimentPathGroup]
 
 
 class ChildNode(BaseModel):
