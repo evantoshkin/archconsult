@@ -35,8 +35,6 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
         "outgoing": [],
     }
     
-    import re
-    
     segment_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL._dst == "{dest_node}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
     logger.info(f"Checking segment {source_node} -> {dest_node} with document_id={document_id}")
     segment_result = session.execute(segment_query)
@@ -46,36 +44,31 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
         return source_result, dest_result
     
     source_incoming_map: dict[str, dict] = {}
-    source_incoming_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY YIELD VISION_INTERFACE_SYSTEM_LEVEL._src AS src'
-    logger.info(f"Fetching incoming paths for source node {source_node}")
+    source_incoming_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
+    logger.info(f"Fetching incoming paths for source node {source_node} with document_id={document_id}")
     source_incoming_result = session.execute(source_incoming_query)
+    
+    if not source_incoming_result.is_succeeded():
+        logger.error(f"Source incoming query failed: {source_incoming_result.error_msg()}")
     
     if source_incoming_result.is_succeeded():
         for row_idx in range(source_incoming_result.row_size()):
             row = source_incoming_result.row_values(row_idx)
             src_id = str(row[0]).strip('"') if row[0] else None
+            system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
             
-            if src_id and src_id != dest_node and src_id != source_node:
+            if src_id and src_id != source_node:
                 if src_id not in source_incoming_map:
-                    name_query = f'FETCH PROP ON SYSTEM "{src_id}" YIELD vertex AS v'
-                    name_result = session.execute(name_query)
-                    system_name = None
-                    if name_result.is_succeeded() and name_result.row_size() > 0:
-                        v_row = name_result.row_values(0)
-                        vertex_str = str(v_row[0]) if v_row[0] else ""
-                        match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            system_name = match.group(1)
                     source_incoming_map[src_id] = {
                         "system_rsm_id": src_id,
                         "system_rsm_name": system_name,
                         "frequency": 0,
                     }
                 source_incoming_map[src_id]["frequency"] += 1
-    source_result["incoming"] = list(source_incoming_map.values())
+    source_result["incoming"] = sorted(source_incoming_map.values(), key=lambda x: -x["frequency"])
     
     source_outgoing_map: dict[str, dict] = {}
-    source_outgoing_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
+    source_outgoing_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS dst_id, $$.SYSTEM.name AS dst_name'
     logger.info(f"Fetching outgoing paths for source node {source_node}")
     source_outgoing_result = session.execute(source_outgoing_query)
     
@@ -83,32 +76,20 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
         for row_idx in range(source_outgoing_result.row_size()):
             row = source_outgoing_result.row_values(row_idx)
             dst_id = str(row[0]).strip('"') if row[0] else None
+            system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
             
             if dst_id and dst_id != source_node and dst_id != dest_node:
-                chain_query = f'GO FROM "{dst_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL._dst == "{dest_node}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS chain_dst'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if dst_id not in source_outgoing_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{dst_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        source_outgoing_map[dst_id] = {
-                            "system_rsm_id": dst_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    source_outgoing_map[dst_id]["frequency"] += 1
-    source_result["outgoing"] = list(source_outgoing_map.values())
+                if dst_id not in source_outgoing_map:
+                    source_outgoing_map[dst_id] = {
+                        "system_rsm_id": dst_id,
+                        "system_rsm_name": system_name,
+                        "frequency": 0,
+                    }
+                source_outgoing_map[dst_id]["frequency"] += 1
+    source_result["outgoing"] = sorted(source_outgoing_map.values(), key=lambda x: -x["frequency"])
     
     dest_incoming_map: dict[str, dict] = {}
-    dest_incoming_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY YIELD VISION_INTERFACE_SYSTEM_LEVEL._src AS src'
+    dest_incoming_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
     logger.info(f"Fetching incoming paths for destination node {dest_node}")
     dest_incoming_result = session.execute(dest_incoming_query)
     
@@ -116,32 +97,20 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
         for row_idx in range(dest_incoming_result.row_size()):
             row = dest_incoming_result.row_values(row_idx)
             src_id = str(row[0]).strip('"') if row[0] else None
+            system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
             
             if src_id and src_id != dest_node and src_id != source_node:
-                chain_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL._dst == "{src_id}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS chain_dst'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if src_id not in dest_incoming_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{src_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        dest_incoming_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    dest_incoming_map[src_id]["frequency"] += 1
-    dest_result["incoming"] = list(dest_incoming_map.values())
+                if src_id not in dest_incoming_map:
+                    dest_incoming_map[src_id] = {
+                        "system_rsm_id": src_id,
+                        "system_rsm_name": system_name,
+                        "frequency": 0,
+                    }
+                dest_incoming_map[src_id]["frequency"] += 1
+    dest_result["incoming"] = sorted(dest_incoming_map.values(), key=lambda x: -x["frequency"])
     
     dest_outgoing_map: dict[str, dict] = {}
-    dest_outgoing_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
+    dest_outgoing_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS dst_id, $$.SYSTEM.name AS dst_name'
     logger.info(f"Fetching outgoing paths for destination node {dest_node}")
     dest_outgoing_result = session.execute(dest_outgoing_query)
     
@@ -149,159 +118,17 @@ def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: s
         for row_idx in range(dest_outgoing_result.row_size()):
             row = dest_outgoing_result.row_values(row_idx)
             dst_id = str(row[0]).strip('"') if row[0] else None
+            system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
             
-            if dst_id and dst_id != source_node and dst_id != dest_node:
+            if dst_id and dst_id != dest_node:
                 if dst_id not in dest_outgoing_map:
-                    name_query = f'FETCH PROP ON SYSTEM "{dst_id}" YIELD vertex AS v'
-                    name_result = session.execute(name_query)
-                    system_name = None
-                    if name_result.is_succeeded() and name_result.row_size() > 0:
-                        v_row = name_result.row_values(0)
-                        vertex_str = str(v_row[0]) if v_row[0] else ""
-                        match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            system_name = match.group(1)
                     dest_outgoing_map[dst_id] = {
                         "system_rsm_id": dst_id,
                         "system_rsm_name": system_name,
                         "frequency": 0,
                     }
                 dest_outgoing_map[dst_id]["frequency"] += 1
-    dest_result["outgoing"] = list(dest_outgoing_map.values())
-    
-    return source_result, dest_result
-    
-    source_incoming_query = f'GO 1 STEPS FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY YIELD VISION_INTERFACE_SYSTEM_LEVEL._src AS src'
-    logger.info(f"Fetching incoming paths for source node {source_node}")
-    source_incoming_result = session.execute(source_incoming_query)
-    
-    source_incoming_map: dict[str, dict] = {}
-    if source_incoming_result.is_succeeded():
-        for row_idx in range(source_incoming_result.row_size()):
-            row = source_incoming_result.row_values(row_idx)
-            src_id = str(row[0]).strip('"') if row[0] else None
-            
-            if src_id and src_id != source_node:
-                chain_query = f'GO FROM "{src_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL._dst == "{dest_node}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if src_id not in source_incoming_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{src_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        source_incoming_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    source_incoming_map[src_id]["frequency"] += 1
-    source_result["incoming"] = list(source_incoming_map.values())
-    
-    source_outgoing_query = f'GO 1 STEPS FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
-    logger.info(f"Fetching outgoing paths for source node {source_node}")
-    source_outgoing_result = session.execute(source_outgoing_query)
-    
-    source_outgoing_map: dict[str, dict] = {}
-    if source_outgoing_result.is_succeeded():
-        for row_idx in range(source_outgoing_result.row_size()):
-            row = source_outgoing_result.row_values(row_idx)
-            dst_id = str(row[0]).strip('"') if row[0] else None
-            
-            if dst_id and dst_id != source_node and dst_id != dest_node:
-                chain_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL._src == "{dst_id}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._src AS src'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if dst_id not in source_outgoing_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{dst_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        source_outgoing_map[dst_id] = {
-                            "system_rsm_id": dst_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    source_outgoing_map[dst_id]["frequency"] += 1
-    source_result["outgoing"] = list(source_outgoing_map.values())
-    
-    dest_incoming_query = f'GO 1 STEPS FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY YIELD VISION_INTERFACE_SYSTEM_LEVEL._src AS src'
-    logger.info(f"Fetching incoming paths for destination node {dest_node}")
-    dest_incoming_result = session.execute(dest_incoming_query)
-    
-    dest_incoming_map: dict[str, dict] = {}
-    if dest_incoming_result.is_succeeded():
-        for row_idx in range(dest_incoming_result.row_size()):
-            row = dest_incoming_result.row_values(row_idx)
-            src_id = str(row[0]).strip('"') if row[0] else None
-            
-            if src_id and src_id != dest_node and src_id != source_node:
-                chain_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL._dst == "{src_id}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if src_id not in dest_incoming_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{src_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        dest_incoming_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    dest_incoming_map[src_id]["frequency"] += 1
-    dest_result["incoming"] = list(dest_incoming_map.values())
-    
-    dest_outgoing_query = f'GO 1 STEPS FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
-    logger.info(f"Fetching outgoing paths for destination node {dest_node}")
-    dest_outgoing_result = session.execute(dest_outgoing_query)
-    
-    dest_outgoing_map: dict[str, dict] = {}
-    if dest_outgoing_result.is_succeeded():
-        for row_idx in range(dest_outgoing_result.row_size()):
-            row = dest_outgoing_result.row_values(row_idx)
-            dst_id = str(row[0]).strip('"') if row[0] else None
-            
-            if dst_id and dst_id != dest_node:
-                chain_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL._dst == "{dest_node}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS chain_dst'
-                chain_result = session.execute(chain_query)
-                
-                if chain_result.is_succeeded() and chain_result.row_size() > 0:
-                    if dst_id not in dest_outgoing_map:
-                        name_query = f'FETCH PROP ON SYSTEM "{dst_id}" YIELD vertex AS v'
-                        name_result = session.execute(name_query)
-                        system_name = None
-                        if name_result.is_succeeded() and name_result.row_size() > 0:
-                            v_row = name_result.row_values(0)
-                            vertex_str = str(v_row[0]) if v_row[0] else ""
-                            match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                            if match:
-                                system_name = match.group(1)
-                        dest_outgoing_map[dst_id] = {
-                            "system_rsm_id": dst_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    dest_outgoing_map[dst_id]["frequency"] += 1
-    dest_result["outgoing"] = list(dest_outgoing_map.values())
+    dest_result["outgoing"] = sorted(dest_outgoing_map.values(), key=lambda x: -x["frequency"])
     
     return source_result, dest_result
 
