@@ -201,13 +201,76 @@ class ExperimentPathGroup(BaseModel):
     document_rsm_date_time: Optional[str] = None
 
 
+class ExperimentRequest(BaseModel):
+    start: TraverseFilter = Field(
+        ...,
+        description="Filter for start nodes",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "start",
+            "x-mcp-tool-arg-description": "Фильтр для начальных узлов поиска пути",
+        }
+    )
+    finish: TraverseFilter = Field(
+        ...,
+        description="Filter for finish nodes",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "finish",
+            "x-mcp-tool-arg-description": "Фильтр для конечных узлов поиска пути",
+        }
+    )
+    sort_by: TraverseSortBy = Field(
+        default=TraverseSortBy.MOST_FREQUENT,
+        description="Sort order: most_frequent, longest, or shortest",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "sort_by",
+            "x-mcp-tool-arg-description": "Порядок сортировки: most_frequent (по частоте), longest (самые длинные), shortest (самые короткие), most_recent (недавние)",
+        }
+    )
+    path_count: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of paths to return",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "path_count",
+            "x-mcp-tool-arg-description": "Количество путей в ответе (от 1 до 100)",
+        }
+    )
+    depth_days: int = Field(
+        ...,
+        ge=1,
+        le=365,
+        description="Depth of search in days",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "depth_days",
+            "x-mcp-tool-arg-description": "Количество дней глубины поиска (от 1 до 365)",
+        }
+    )
+    search_incoming: bool = Field(
+        default=True,
+        description="Search incoming paths",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "search_incoming",
+            "x-mcp-tool-arg-description": "Искать входящие пути (paths/incoming)",
+        }
+    )
+    search_outgoing: bool = Field(
+        default=True,
+        description="Search outgoing paths",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "search_outgoing",
+            "x-mcp-tool-arg-description": "Искать исходящие пути (paths/outgoing)",
+        }
+    )
+
+
 class ExperimentResponse(BaseModel):
     paths: list[ExperimentPathGroup]
 
 
 class ChildNode(BaseModel):
     label: str = ""
-    other_info: dict = {}
+    
     rsm_id: str = ""
     rsm_name: Optional[str] = None
 

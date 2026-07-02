@@ -25,8 +25,8 @@
         "HOME"
       ],
       "env-overrides": {
-        "NODE_FUNCTION_ALLOW_BUILTIN": "crypto",
-        "NODE_FUNCTION_ALLOW_EXTERNAL": "moment",
+        "NODE_FUNCTION_ALLOW_BUILTIN": "*",
+        "NODE_FUNCTION_ALLOW_EXTERNAL": "moment,cheerio",
         "N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST": "0.0.0.0"
       }
     },
@@ -48,7 +48,7 @@
         "DEPLOYMENT_NAME"
       ],
       "env-overrides": {
-        "N8N_RUNNERS_STDLIB_ALLOW": "json,hashlib",
+        "N8N_RUNNERS_STDLIB_ALLOW": "*",
         "N8N_RUNNERS_EXTERNAL_ALLOW": "nebula3,xxhash"
       }
     }
