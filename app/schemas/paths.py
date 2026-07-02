@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class PathSearchResponse(BaseModel):
@@ -126,7 +126,7 @@ class TraverseRequest(BaseModel):
     )
 
     depth_days: int = Field(
-        ...,
+        default=30,
         ge=1,
         le=365,
         description="Depth of search in days",
@@ -138,8 +138,8 @@ class TraverseRequest(BaseModel):
 
 
 class TraversePathNode(BaseModel):
-    order: int
-    system_rsm_id: str
+    order: int = 0
+    system_rsm_id: str = ""
     system_rsm_name: Optional[str] = None
     module_rsm_id: str = ""
     module_rsm_name: Optional[str] = None
@@ -148,57 +148,14 @@ class TraversePathNode(BaseModel):
 
 
 class TraversePathGroup(BaseModel):
-    path: list[TraversePathNode]
-    integration_example_count: int
-    document_rsm_id: str
-    document_rsm_date_time: Optional[str] = None
+    path: list[TraversePathNode] = Field(default=[])
+    integration_example_count: int = Field(default=0)
+    eotar_rsm_id: Optional[str] = None
+    eotar_rsm_date_time: Optional[str] = None
 
 
 class TraverseResponse(BaseModel):
-    paths: list[TraversePathGroup]
-
-
-class ExperimentNodePath(BaseModel):
-    system_rsm_id: str
-    system_rsm_name: Optional[str] = None
-    frequency: int = 1
-
-
-class ExperimentNodePaths(BaseModel):
-    incoming: list[ExperimentNodePath] = []
-    outgoing: list[ExperimentNodePath] = []
-
-
-class ExperimentPathSegmentSource(BaseModel):
-    system_rsm_id: str
-    system_rsm_name: Optional[str] = None
-    module_rsm_id: str = ""
-    module_rsm_name: Optional[str] = None
-    component_rsm_id: str = ""
-    component_rsm_name: Optional[str] = None
-    paths: Optional[ExperimentNodePaths] = None
-
-
-class ExperimentPathSegmentDestination(BaseModel):
-    system_rsm_id: str
-    system_rsm_name: Optional[str] = None
-    module_rsm_id: str = ""
-    module_rsm_name: Optional[str] = None
-    component_rsm_id: str = ""
-    component_rsm_name: Optional[str] = None
-    paths: Optional[ExperimentNodePaths] = None
-
-
-class ExperimentPathSegment(BaseModel):
-    source: ExperimentPathSegmentSource
-    destination: ExperimentPathSegmentDestination
-
-
-class ExperimentPathGroup(BaseModel):
-    segments: list[ExperimentPathSegment]
-    frequency: int
-    document_rsm_id: str
-    document_rsm_date_time: Optional[str] = None
+    paths: list[TraversePathGroup] = Field(default=[])
 
 
 class ExperimentRequest(BaseModel):
@@ -237,7 +194,7 @@ class ExperimentRequest(BaseModel):
         }
     )
     depth_days: int = Field(
-        ...,
+        default=30,
         ge=1,
         le=365,
         description="Depth of search in days",
@@ -262,6 +219,49 @@ class ExperimentRequest(BaseModel):
             "x-mcp-tool-arg-description": "Искать исходящие пути (paths/outgoing)",
         }
     )
+
+
+class ExperimentNodePath(BaseModel):
+    system_rsm_id: str = ""
+    system_rsm_name: Optional[str] = None
+    frequency: int = 0
+
+
+class ExperimentNodePaths(BaseModel):
+    incoming: list[ExperimentNodePath] = []
+    outgoing: list[ExperimentNodePath] = []
+
+
+class ExperimentPathSegmentSource(BaseModel):
+    system_rsm_id: str = ""
+    system_rsm_name: Optional[str] = None
+    module_rsm_id: str = ""
+    module_rsm_name: Optional[str] = None
+    component_rsm_id: str = ""
+    component_rsm_name: Optional[str] = None
+    paths: ExperimentNodePaths = Field(default_factory=ExperimentNodePaths)
+
+
+class ExperimentPathSegmentDestination(BaseModel):
+    system_rsm_id: str = ""
+    system_rsm_name: Optional[str] = None
+    module_rsm_id: str = ""
+    module_rsm_name: Optional[str] = None
+    component_rsm_id: str = ""
+    component_rsm_name: Optional[str] = None
+    paths: ExperimentNodePaths = Field(default_factory=ExperimentNodePaths)
+
+
+class ExperimentPathSegment(BaseModel):
+    source: ExperimentPathSegmentSource
+    destination: ExperimentPathSegmentDestination
+
+
+class ExperimentPathGroup(BaseModel):
+    segments: list[ExperimentPathSegment] = []
+    frequency: int = 0
+    document_rsm_id: Optional[str] = None
+    document_rsm_date_time: Optional[str] = None
 
 
 class ExperimentResponse(BaseModel):
