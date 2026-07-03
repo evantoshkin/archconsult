@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import health, paths as paths_v1
 from app.api.v2 import paths as paths_v2
+from app.api.v3 import paths as paths_v3
 from app.core.config import settings
 from app.core.logging import RequestIdMiddleware, setup_logging
 from app.db.pool import close_pool, create_pool
@@ -50,6 +51,7 @@ app.add_middleware(RequestIdMiddleware)
 
 app.include_router(paths_v1.router)
 app.include_router(paths_v2.router)
+app.include_router(paths_v3.router)
 app.include_router(health.router)
 
 
