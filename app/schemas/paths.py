@@ -3,6 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.core.config import settings
+
 
 class PathSearchResponse(BaseModel):
     from_system_id: str
@@ -126,7 +128,7 @@ class TraverseRequest(BaseModel):
     )
 
     depth_days: int = Field(
-        default=30,
+        default=settings.SEARCH_DEPTH_DAYS,
         ge=1,
         le=365,
         description="Depth of search in days",
@@ -194,7 +196,7 @@ class ExperimentRequest(BaseModel):
         }
     )
     depth_days: int = Field(
-        default=30,
+        default=settings.SEARCH_DEPTH_DAYS,
         ge=1,
         le=365,
         description="Depth of search in days",

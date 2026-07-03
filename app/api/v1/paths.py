@@ -237,10 +237,20 @@ async def traverse_search(request: TraverseRequest) -> TraverseResponse:
                     edge = edge_data_list[0]
                     module_rsm_id = edge.get("consumer_module_id", "")
                     component_rsm_id = edge.get("consumer_component_id", "")
+                    # Override with filter values if specified
+                    if request.start.module_rsm_id:
+                        module_rsm_id = request.start.module_rsm_id
+                    if request.start.component_rsm_id:
+                        component_rsm_id = request.start.component_rsm_id
                 elif i == num_nodes - 1 and num_nodes > 1 and len(edge_data_list) >= num_nodes - 1:
                     edge = edge_data_list[num_nodes - 2]
                     module_rsm_id = edge.get("provider_module_id", "")
                     component_rsm_id = edge.get("provider_component_id", "")
+                    # Override with filter values if specified
+                    if request.finish.module_rsm_id:
+                        module_rsm_id = request.finish.module_rsm_id
+                    if request.finish.component_rsm_id:
+                        component_rsm_id = request.finish.component_rsm_id
                 elif i > 0 and i < num_nodes - 1:
                     if len(edge_data_list) >= i:
                         edge = edge_data_list[i - 1]
@@ -449,6 +459,20 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                     source_component_id = edge.get("consumer_component_id", "")
                     dest_module_id = edge.get("provider_module_id", "")
                     dest_component_id = edge.get("provider_component_id", "")
+                    
+                    # Override with filter values for the first segment (source = start)
+                    if i == 0:
+                        if request.start.module_rsm_id:
+                            source_module_id = request.start.module_rsm_id
+                        if request.start.component_rsm_id:
+                            source_component_id = request.start.component_rsm_id
+                    
+                    # Override with filter values for the last segment (destination = finish)
+                    if i == num_nodes - 2:
+                        if request.finish.module_rsm_id:
+                            dest_module_id = request.finish.module_rsm_id
+                        if request.finish.component_rsm_id:
+                            dest_component_id = request.finish.component_rsm_id
                 
                 source_names = node_names.get((source_node, source_module_id, source_component_id))
                 source_system_names = node_names.get((source_node, "", ""))

@@ -79,6 +79,13 @@ async def execute_nebula_experiment_search(
             logger.info("No start system_rsm_id provided, returning empty results")
             return {}
         
+        # Build optional filter conditions for start (consumer) module/component
+        start_edge_conditions = f'VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"'
+        if start_filter.module_rsm_id:
+            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id == "{start_filter.module_rsm_id}"'
+        if start_filter.component_rsm_id:
+            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id == "{start_filter.component_rsm_id}"'
+        
         system_query = f"""
         FETCH PROP ON SYSTEM "{start_filter.system_rsm_id}"
         YIELD vertex AS v
@@ -97,7 +104,7 @@ async def execute_nebula_experiment_search(
         
         edges_query = f"""
         GO FROM "{start_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL
-        WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
+        WHERE {start_edge_conditions}
         YIELD 
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS document_id,
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS document_date,
@@ -419,9 +426,15 @@ async def execute_nebula_traverse_search(
         
         logger.info(f"Found system: vertex_id={start_vertex_id}, name={start_system_name}")
         
+        start_edge_conditions = f'VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"'
+        if start_filter.module_rsm_id:
+            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id == "{start_filter.module_rsm_id}"'
+        if start_filter.component_rsm_id:
+            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id == "{start_filter.component_rsm_id}"'
+        
         edges_query = f"""
         GO FROM "{start_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL
-        WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
+        WHERE {start_edge_conditions}
         YIELD 
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS eotar_id,
             VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS eotar_date,
@@ -496,9 +509,15 @@ async def execute_nebula_traverse_search(
         incoming_eotar_data: dict[str, dict] = {}
         
         if finish_filter.system_rsm_id:
+            finish_edge_conditions = f'VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"'
+            if finish_filter.module_rsm_id:
+                finish_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id == "{finish_filter.module_rsm_id}"'
+            if finish_filter.component_rsm_id:
+                finish_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id == "{finish_filter.component_rsm_id}"'
+            
             incoming_query = f"""
             GO FROM "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY
-            WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
+            WHERE {finish_edge_conditions}
             YIELD 
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS eotar_id,
                 VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS eotar_date,
@@ -577,6 +596,8 @@ async def execute_nebula_traverse_search(
         
         for eotar_id in matching_eotar_ids:
             clean_eotar_id = eotar_id.strip('"')
+            # Use only document_id filter in FIND ALL PATH.
+            # Module/component filtering is already applied in GO FROM edge queries above.
             path_query = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_eotar_id}" YIELD path AS p'
             
             logger.info(f"Executing path query for eotar_id {eotar_id}: {path_query}")
@@ -648,6 +669,31 @@ async def execute_nebula_traverse_search(
                             "distance": len(nodes),
                             "edge_data": edge_data_list,
                         }
+            
+            # Post-filter paths by start/finish module/component on first/last edge
+            if paths_for_eotar and (start_filter.module_rsm_id or start_filter.component_rsm_id or finish_filter.module_rsm_id or finish_filter.component_rsm_id):
+                filtered: dict[str, dict] = {}
+                for path_key, pdata in paths_for_eotar.items():
+                    edge_list = pdata.get("edge_data", [])
+                    if not edge_list:
+                        continue
+                    first_edge = edge_list[0]
+                    last_edge = edge_list[-1]
+                    
+                    # Check start filter on first edge (consumer)
+                    if start_filter.module_rsm_id and first_edge.get("consumer_module_id", "") != start_filter.module_rsm_id:
+                        continue
+                    if start_filter.component_rsm_id and first_edge.get("consumer_component_id", "") != start_filter.component_rsm_id:
+                        continue
+                    
+                    # Check finish filter on last edge (provider)
+                    if finish_filter.module_rsm_id and last_edge.get("provider_module_id", "") != finish_filter.module_rsm_id:
+                        continue
+                    if finish_filter.component_rsm_id and last_edge.get("provider_component_id", "") != finish_filter.component_rsm_id:
+                        continue
+                    
+                    filtered[path_key] = pdata
+                paths_for_eotar = filtered
             
             if paths_for_eotar:
                 out_data = outgoing_eotar_data.get(eotar_id, {})

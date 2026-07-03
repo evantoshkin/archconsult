@@ -23,6 +23,7 @@ services:
       - NEBULA_PORT=${NEBULA_PORT:-9669}
       - NEBULA_USER=${NEBULA_USER:-root}
       - NEBULA_PASSWORD=${NEBULA_PASSWORD:-nebula}
+      - SEARCH_DEPTH_DAYS=${SEARCH_DEPTH_DAYS:-90}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

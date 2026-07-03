@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     NEBULA_PASSWORD: str = "nebula"
     NEBULA_SPACE: str = "RSM"
 
+    SEARCH_DEPTH_DAYS: int = 30
+
     LOG_LEVEL: str = "INFO"
     DB_STATEMENT_TIMEOUT_MS: int = 30000
 
