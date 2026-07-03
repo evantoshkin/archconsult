@@ -263,9 +263,9 @@ async def execute_nebula_experiment_search(
             
             paths_for_document: dict[str, dict] = {}
             
-            def process_path_result(path_result, direction: str):
+            def process_path_result(path_result):
                 if not path_result.is_succeeded():
-                    logger.error(f"Path query ({direction}) failed for document_id {document_id}: {path_result.error_msg()}")
+                    logger.error(f"Path query failed for document_id {document_id}: {path_result.error_msg()}")
                     return
                 
                 for row_index in range(path_result.row_size()):
@@ -276,16 +276,27 @@ async def execute_nebula_experiment_search(
                     
                     path = row[0] if row[0] else None
                     if path:
-                        path_str = str(path)
+                        raw_path = str(path)
+                        temp_nodes = []
+                        temp_dirs = []
+                        idx = 0
+                        while idx < len(raw_path):
+                            if raw_path[idx] == '(' and idx + 1 < len(raw_path) and raw_path[idx + 1] == '"':
+                                start = idx + 2
+                                end = raw_path.index('"', start)
+                                temp_nodes.append(raw_path[start:end])
+                                idx = end + 2
+                            elif raw_path[idx:idx+1] == "<" and raw_path[idx:idx+2] == "<-":
+                                temp_dirs.append("reverse")
+                                idx += 2
+                            elif raw_path[idx:idx+2] == "->":
+                                temp_dirs.append("forward")
+                                idx += 2
+                            else:
+                                idx += 1
                         
-                        nodes = []
-                        if "->" in path_str:
-                            parts = path_str.split("->")
-                            for part in parts:
-                                if '"' in part:
-                                    node_id = part.split('"')[1] if '"' in part else ""
-                                    if node_id:
-                                        nodes.append(node_id)
+                        nodes = temp_nodes
+                        edge_directions = temp_dirs[:len(nodes)-1] if len(temp_dirs) >= len(nodes) - 1 else ["forward"] * (len(nodes) - 1)
                         
                         path_key = tuple(nodes)
                         
@@ -294,13 +305,14 @@ async def execute_nebula_experiment_search(
                             for i in range(len(nodes) - 1):
                                 from_node = nodes[i]
                                 to_node = nodes[i + 1]
+                                is_reverse = (edge_directions[i] == "reverse") if i < len(edge_directions) else False
                                 
-                                if direction == "forward":
+                                if not is_reverse:
                                     edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
                                 else:
                                     edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
                                 
-                                logger.info(f"Executing edge query ({direction}): {edge_query}")
+                                logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
                                 
                                 found = False
@@ -334,18 +346,13 @@ async def execute_nebula_experiment_search(
                             }
             
             # Query 1: Direct edges (forward direction)
-            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
+            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL BIDIRECT WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
             
             logger.info(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
-            process_path_result(path_result_forward, "forward")
+            process_path_result(path_result_forward)
             
-            # Query 2: Reverse edges (reverse direction)
-            path_query_reverse = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
             
-            logger.info(f"Executing reverse path query for document_id {document_id}: {path_query_reverse}")
-            path_result_reverse = session.execute(path_query_reverse)
-            process_path_result(path_result_reverse, "reverse")
             
             if paths_for_document:
                 out_data = outgoing_document_data.get(document_id, {})
@@ -747,21 +754,16 @@ async def fetch_nebula_node_names(
         
         for sys_id, mod_id, comp_id in set(nodes):
             if sys_id:
-                query = f'FETCH PROP ON * "{sys_id}" YIELD vertex as v'
+                query = f'FETCH PROP ON SYSTEM "{sys_id}" YIELD vertex as v'
                 result = session.execute(query)
                 if result.is_succeeded() and result.row_size() > 0:
                     row = result.row_values(0)
                     vertex_str = str(row[0]) if row[0] else ""
                     
                     name = None
-                    if "system_rsm_name:" in vertex_str:
+                    if "name:" in vertex_str or "rsm_name:" in vertex_str:
                         import re
-                        match = re.search(r'system_rsm_name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    elif "name:" in vertex_str:
-                        import re
-                        match = re.search(r'name:\s*"([^"]*)"', vertex_str)
+                        match = re.search(r'(?:name|rsm_name):\s*"([^"]*)"', vertex_str)
                         if match:
                             name = match.group(1)
                     
