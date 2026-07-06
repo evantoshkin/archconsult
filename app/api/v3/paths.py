@@ -146,6 +146,7 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                 dest_system_names = node_names.get((dest_node, "", ""))
 
                 segments.append(ExperimentPathSegment(
+                    description="",
                     source=ExperimentPathSegmentSource(
                         system_rsm_id=source_node,
                         system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,

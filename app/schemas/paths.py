@@ -244,6 +244,7 @@ class ExperimentPathSegmentDestination(BaseModel):
 class ExperimentPathSegment(BaseModel):
     source: ExperimentPathSegmentSource
     destination: ExperimentPathSegmentDestination
+    description: str = ""
 
 
 class ExperimentPathGroup(BaseModel):
