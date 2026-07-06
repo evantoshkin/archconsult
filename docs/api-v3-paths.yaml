@@ -146,21 +146,7 @@ components:
           x-mcp-tool-arg-description: Количество дней глубины поиска (от 1 до 365)
           x-mcp-tool-arg-name: depth_days
 
-        search_incoming:
-          type: boolean
-          title: Search Incoming
-          description: Искать входящие пути (фильтр, зарезервировано)
-          default: true
-          x-mcp-tool-arg-description: Искать входящие пути (paths/incoming)
-          x-mcp-tool-arg-name: search_incoming
 
-        search_outgoing:
-          type: boolean
-          title: Search Outgoing
-          description: Искать исходящие пути (фильтр, зарезервировано)
-          default: true
-          x-mcp-tool-arg-description: Искать исходящие пути (paths/outgoing)
-          x-mcp-tool-arg-name: search_outgoing
 
     TraverseFilter:
       type: object

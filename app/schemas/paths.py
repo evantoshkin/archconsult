@@ -218,22 +218,7 @@ class PathRequest(BaseModel):
             "x-mcp-tool-arg-description": "Количество дней глубины поиска (от 1 до 365)",
         }
     )
-    search_incoming: bool = Field(
-        default=True,
-        description="Search incoming paths",
-        json_schema_extra={
-            "x-mcp-tool-arg-name": "search_incoming",
-            "x-mcp-tool-arg-description": "Искать входящие пути (paths/incoming)",
-        }
-    )
-    search_outgoing: bool = Field(
-        default=True,
-        description="Search outgoing paths",
-        json_schema_extra={
-            "x-mcp-tool-arg-name": "search_outgoing",
-            "x-mcp-tool-arg-description": "Искать исходящие пути (paths/outgoing)",
-        }
-    )
+
 
 
 class PathSegmentSource(BaseModel):
