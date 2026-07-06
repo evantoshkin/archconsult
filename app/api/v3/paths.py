@@ -48,34 +48,7 @@ async def path_search(request: PathRequest) -> PathResponse:
             detail={"code": "NEBULA_ERROR", "message": str(e)},
         )
 
-    all_nodes: list[tuple[str, str, str]] = []
-    for eotar_id, data in results.items():
-        for path_key, path_data in data["paths"].items():
-            edge_data_list = path_data.get("edge_data", [])
-            nodes = path_data["path"]
-            num_nodes = len(nodes)
 
-            for i, node_id in enumerate(nodes):
-                module_id = ""
-                component_id = ""
-
-                if i == 0 and num_nodes > 1 and len(edge_data_list) > 0:
-                    edge = edge_data_list[0]
-                    module_id = edge.get("consumer_module_id", "")
-                    component_id = edge.get("consumer_component_id", "")
-                elif i == num_nodes - 1 and num_nodes > 1 and len(edge_data_list) >= num_nodes - 1:
-                    edge = edge_data_list[num_nodes - 2]
-                    module_id = edge.get("provider_module_id", "")
-                    component_id = edge.get("provider_component_id", "")
-                elif i > 0 and i < num_nodes - 1:
-                    if len(edge_data_list) >= i:
-                        edge = edge_data_list[i - 1]
-                        module_id = edge.get("provider_module_id", "")
-                        component_id = edge.get("provider_component_id", "")
-
-                all_nodes.append((node_id, module_id, component_id))
-
-    node_names = await fetch_nebula_node_names(all_nodes)
 
     path_eotar_map: dict[tuple, set[str]] = {}
     path_data_map: dict[tuple, dict] = {}
@@ -98,6 +71,59 @@ async def path_search(request: PathRequest) -> PathResponse:
             new_date = result_data.get("document_rsm_date_time")
             if new_date and (not existing_date or new_date > existing_date):
                 path_data_map[path_key]["document_rsm_date_time"] = new_date
+    # Collect all (node_id, module_id, component_id) combinations needed for name lookups.
+    # Must run after path_data_map is populated.
+    all_nodes_set: set[tuple[str, str, str]] = set()
+    for path_key, data in path_data_map.items():
+        path_nodes = data["path"]
+        edge_data_list = data.get("edge_data", [])
+        edge_directions = data.get("edge_directions", [])
+        num_nodes = len(path_nodes)
+
+        for i in range(num_nodes - 1):
+            source_node = path_nodes[i]
+            dest_node = path_nodes[i + 1]
+            source_module_id = ""
+            source_component_id = ""
+            dest_module_id = ""
+            dest_component_id = ""
+
+            if i < len(edge_data_list):
+                edge = edge_data_list[i]
+                is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
+
+                if is_reverse:
+                    source_node = path_nodes[i + 1]
+                    dest_node = path_nodes[i]
+                    source_module_id = edge.get("consumer_module_id", "")
+                    source_component_id = edge.get("consumer_component_id", "")
+                    dest_module_id = edge.get("provider_module_id", "")
+                    dest_component_id = edge.get("provider_component_id", "")
+                else:
+                    source_module_id = edge.get("consumer_module_id", "")
+                    source_component_id = edge.get("consumer_component_id", "")
+                    dest_module_id = edge.get("provider_module_id", "")
+                    dest_component_id = edge.get("provider_component_id", "")
+
+            all_nodes_set.add((source_node, source_module_id, source_component_id))
+            all_nodes_set.add((source_node, "", ""))
+            all_nodes_set.add((dest_node, dest_module_id, dest_component_id))
+            all_nodes_set.add((dest_node, "", ""))
+
+            # Also add overridden module/component IDs from request filters
+            if i == 0 and request.start.module_rsm_id:
+                all_nodes_set.add((source_node, request.start.module_rsm_id, source_component_id))
+            if i == num_nodes - 2 and request.finish.module_rsm_id:
+                all_nodes_set.add((dest_node, request.finish.module_rsm_id, dest_component_id))
+
+    # Also add the finish system node names if finish filter is provided
+    if request.finish.system_rsm_id:
+        all_nodes_set.add((request.finish.system_rsm_id, "", ""))
+
+    all_nodes = list(all_nodes_set)
+
+    node_names = await fetch_nebula_node_names(all_nodes)
+
 
     path_groups: dict[tuple, dict] = {}
 
