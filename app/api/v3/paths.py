@@ -142,6 +142,7 @@ async def path_search(request: PathRequest) -> PathResponse:
             document_id = sorted(eotar_ids)[0] if eotar_ids else ""
 
             segments: list[PathSegment] = []
+            logger.info(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
             for i in range(num_nodes - 1):
                 source_node = path_nodes[i]
                 dest_node = path_nodes[i + 1]
@@ -172,6 +173,7 @@ async def path_search(request: PathRequest) -> PathResponse:
                         # provider_module_id belongs to destination (provider)
                         dest_module_id = edge.get("provider_module_id", "")
                         dest_component_id = edge.get("provider_component_id", "")
+                        logger.info(f"  Segment {i}: REVERSE: {path_nodes[i]} <- {path_nodes[i+1]}  |  source={source_node}(consumer) -> dest={dest_node}(provider)")
                     else:
                         # Edge goes same direction as path
                         # source (requester) = consumer = nodes[i]
@@ -180,6 +182,7 @@ async def path_search(request: PathRequest) -> PathResponse:
                         source_component_id = edge.get("consumer_component_id", "")
                         dest_module_id = edge.get("provider_module_id", "")
                         dest_component_id = edge.get("provider_component_id", "")
+                        logger.info(f"  Segment {i}: FORWARD: {path_nodes[i]} -> {path_nodes[i+1]}  |  source={source_node}(consumer) -> dest={dest_node}(provider)")
 
                     if i == 0:
                         if request.start.module_rsm_id:

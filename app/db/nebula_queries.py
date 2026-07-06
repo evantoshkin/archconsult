@@ -85,7 +85,7 @@ async def execute_nebula_experiment_search(
             logger.info("No start system_rsm_id provided, returning empty results")
             return {}
         
-        # Build optional filter conditions for start (consumer) module/component
+        # Build filter conditions
         start_edge_conditions = f'{edge_type}.rsm_document_date > "{cutoff_date}"'
         if start_filter.module_rsm_id:
             start_edge_conditions += f' AND {edge_type}.consumer_module_id == "{start_filter.module_rsm_id}"'
@@ -108,8 +108,62 @@ async def execute_nebula_experiment_search(
             logger.info(f"System {start_filter.system_rsm_id} not found")
             return {}
         
+        def collect_document_data(
+            result,
+            target_dict: dict[str, dict],
+            label: str
+        ):
+            if not result.is_succeeded():
+                logger.error(f"{label} query failed: {result.error_msg()}")
+                return
+            for row_index in range(result.row_size()):
+                row = result.row_values(row_index)
+                if len(row) < 6:
+                    continue
+                document_id = str(row[0]) if row[0] else None
+                if not document_id or document_id in ("None", "__EMPTY__"):
+                    continue
+                document_date = str(row[1]) if row[1] else None
+                consumer_module_id = str(row[2]) if row[2] else None
+                provider_module_id = str(row[3]) if row[3] else None
+                consumer_component_id = str(row[4]) if row[4] else None
+                provider_component_id = str(row[5]) if row[5] else None
+                document_date_clean = None
+                if document_date and document_date not in ("None", "__EMPTY__"):
+                    document_date_clean = document_date.strip('"').strip()
+                consumer_module_id_clean = None
+                if consumer_module_id and consumer_module_id not in ("None", "__EMPTY__"):
+                    consumer_module_id_clean = consumer_module_id.strip('"').strip()
+                provider_module_id_clean = None
+                if provider_module_id and provider_module_id not in ("None", "__EMPTY__"):
+                    provider_module_id_clean = provider_module_id.strip('"').strip()
+                consumer_component_id_clean = None
+                if consumer_component_id and consumer_component_id not in ("None", "__EMPTY__"):
+                    consumer_component_id_clean = consumer_component_id.strip('"').strip()
+                provider_component_id_clean = None
+                if provider_component_id and provider_component_id not in ("None", "__EMPTY__"):
+                    provider_component_id_clean = provider_component_id.strip('"').strip()
+                if document_id not in target_dict:
+                    target_dict[document_id] = {
+                        "document_date": document_date_clean,
+                        "consumer_module_id": consumer_module_id_clean,
+                        "provider_module_id": provider_module_id_clean,
+                        "consumer_component_id": consumer_component_id_clean,
+                        "provider_component_id": provider_component_id_clean,
+                    }
+                elif document_date_clean:
+                    existing = target_dict[document_id].get("document_date")
+                    if existing is None or document_date_clean > existing:
+                        target_dict[document_id]["document_date"] = document_date_clean
+                        target_dict[document_id]["consumer_module_id"] = consumer_module_id_clean
+                        target_dict[document_id]["provider_module_id"] = provider_module_id_clean
+                        target_dict[document_id]["consumer_component_id"] = consumer_component_id_clean
+                        target_dict[document_id]["provider_component_id"] = provider_component_id_clean
+        
+        outgoing_document_data: dict[str, dict] = {}
+        
         edges_query = f"""
-        GO FROM "{start_filter.system_rsm_id}" OVER {edge_type}
+        GO FROM "{start_filter.system_rsm_id}" OVER {edge_type} BIDIRECT
         WHERE {start_edge_conditions}
         YIELD 
             {edge_type}.rsm_document_id AS document_id,
@@ -120,73 +174,16 @@ async def execute_nebula_experiment_search(
             {edge_type}.provider_component_id AS provider_component_id
         """
         
-        logger.info(f"Executing edges query: {edges_query}")
-        edges_result = session.execute(edges_query)
+        logger.info(f"Executing start edges query (BIDIRECT): {edges_query}")
+        collect_document_data(session.execute(edges_query), outgoing_document_data, "start_bidirect")
         
-        if not edges_result.is_succeeded():
-            logger.error(f"Edges query failed: {edges_result.error_msg()}")
-            return {}
-        
-        outgoing_document_data: dict[str, dict] = {}
-        
-        for row_index in range(edges_result.row_size()):
-            row = edges_result.row_values(row_index)
-            
-            if len(row) < 6:
-                continue
-            
-            document_id = str(row[0]) if row[0] else None
-            document_date = str(row[1]) if row[1] else None
-            consumer_module_id = str(row[2]) if row[2] else None
-            provider_module_id = str(row[3]) if row[3] else None
-            consumer_component_id = str(row[4]) if row[4] else None
-            provider_component_id = str(row[5]) if row[5] else None
-            
-            if document_id and document_id != "None" and document_id != "__EMPTY__":
-                document_date_clean = None
-                if document_date and document_date != "None" and document_date != "__EMPTY__":
-                    document_date_clean = document_date.strip('"').strip()
-                
-                consumer_module_id_clean = None
-                if consumer_module_id and consumer_module_id != "None" and consumer_module_id != "__EMPTY__":
-                    consumer_module_id_clean = consumer_module_id.strip('"').strip()
-                
-                provider_module_id_clean = None
-                if provider_module_id and provider_module_id != "None" and provider_module_id != "__EMPTY__":
-                    provider_module_id_clean = provider_module_id.strip('"').strip()
-                
-                consumer_component_id_clean = None
-                if consumer_component_id and consumer_component_id != "None" and consumer_component_id != "__EMPTY__":
-                    consumer_component_id_clean = consumer_component_id.strip('"').strip()
-                
-                provider_component_id_clean = None
-                if provider_component_id and provider_component_id != "None" and provider_component_id != "__EMPTY__":
-                    provider_component_id_clean = provider_component_id.strip('"').strip()
-                
-                if document_id not in outgoing_document_data:
-                    outgoing_document_data[document_id] = {
-                        "document_date": document_date_clean,
-                        "consumer_module_id": consumer_module_id_clean,
-                        "provider_module_id": provider_module_id_clean,
-                        "consumer_component_id": consumer_component_id_clean,
-                        "provider_component_id": provider_component_id_clean,
-                    }
-                elif document_date_clean:
-                    existing = outgoing_document_data[document_id].get("document_date")
-                    if existing is None or document_date_clean > existing:
-                        outgoing_document_data[document_id]["document_date"] = document_date_clean
-                        outgoing_document_data[document_id]["consumer_module_id"] = consumer_module_id_clean
-                        outgoing_document_data[document_id]["provider_module_id"] = provider_module_id_clean
-                        outgoing_document_data[document_id]["consumer_component_id"] = consumer_component_id_clean
-                        outgoing_document_data[document_id]["provider_component_id"] = provider_component_id_clean
-        
-        logger.info(f"Found {len(outgoing_document_data)} outgoing document_ids from start system")
+        logger.info(f"Found {len(outgoing_document_data)} document_ids from start system (BIDIRECT)")
         
         incoming_document_data: dict[str, dict] = {}
         
         if finish_filter.system_rsm_id:
             incoming_query = f"""
-            GO FROM "{finish_filter.system_rsm_id}" OVER {edge_type} REVERSELY
+            GO FROM "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT
             WHERE {edge_type}.rsm_document_date > "{cutoff_date}"
             YIELD 
                 {edge_type}.rsm_document_id AS document_id,
@@ -197,64 +194,10 @@ async def execute_nebula_experiment_search(
                 {edge_type}.provider_component_id AS provider_component_id
             """
             
-            logger.info(f"Executing incoming edges query: {incoming_query}")
-            incoming_result = session.execute(incoming_query)
+            logger.info(f"Executing finish edges query (BIDIRECT): {incoming_query}")
+            collect_document_data(session.execute(incoming_query), incoming_document_data, "finish_bidirect")
             
-            if incoming_result.is_succeeded():
-                for row_index in range(incoming_result.row_size()):
-                    row = incoming_result.row_values(row_index)
-                    
-                    if len(row) < 6:
-                        continue
-                    
-                    document_id = str(row[0]) if row[0] else None
-                    document_date = str(row[1]) if row[1] else None
-                    consumer_module_id = str(row[2]) if row[2] else None
-                    provider_module_id = str(row[3]) if row[3] else None
-                    consumer_component_id = str(row[4]) if row[4] else None
-                    provider_component_id = str(row[5]) if row[5] else None
-                    
-                    if document_id and document_id != "None" and document_id != "__EMPTY__":
-                        document_date_clean = None
-                        if document_date and document_date != "None" and document_date != "__EMPTY__":
-                            document_date_clean = document_date.strip('"').strip()
-                        
-                        consumer_module_id_clean = None
-                        if consumer_module_id and consumer_module_id != "None" and consumer_module_id != "__EMPTY__":
-                            consumer_module_id_clean = consumer_module_id.strip('"').strip()
-                        
-                        provider_module_id_clean = None
-                        if provider_module_id and provider_module_id != "None" and provider_module_id != "__EMPTY__":
-                            provider_module_id_clean = provider_module_id.strip('"').strip()
-                        
-                        consumer_component_id_clean = None
-                        if consumer_component_id and consumer_component_id != "None" and consumer_component_id != "__EMPTY__":
-                            consumer_component_id_clean = consumer_component_id.strip('"').strip()
-                        
-                        provider_component_id_clean = None
-                        if provider_component_id and provider_component_id != "None" and provider_component_id != "__EMPTY__":
-                            provider_component_id_clean = provider_component_id.strip('"').strip()
-                        
-                        if document_id not in incoming_document_data:
-                            incoming_document_data[document_id] = {
-                                "document_date": document_date_clean,
-                                "consumer_module_id": consumer_module_id_clean,
-                                "provider_module_id": provider_module_id_clean,
-                                "consumer_component_id": consumer_component_id_clean,
-                                "provider_component_id": provider_component_id_clean,
-                            }
-                        elif document_date_clean:
-                            existing = incoming_document_data[document_id].get("document_date")
-                            if existing is None or document_date_clean > existing:
-                                incoming_document_data[document_id]["document_date"] = document_date_clean
-                                incoming_document_data[document_id]["consumer_module_id"] = consumer_module_id_clean
-                                incoming_document_data[document_id]["provider_module_id"] = provider_module_id_clean
-                                incoming_document_data[document_id]["consumer_component_id"] = consumer_component_id_clean
-                                incoming_document_data[document_id]["provider_component_id"] = provider_component_id_clean
-                
-                logger.info(f"Found {len(incoming_document_data)} incoming document_ids to finish system")
-            else:
-                logger.error(f"Incoming edges query failed: {incoming_result.error_msg()}")
+            logger.info(f"Found {len(incoming_document_data)} document_ids to finish system (BIDIRECT)")
         
         outgoing_document_ids = set(outgoing_document_data.keys())
         incoming_document_ids = set(incoming_document_data.keys())
