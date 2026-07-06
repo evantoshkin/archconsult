@@ -11,6 +11,7 @@ from app.schemas.paths import (
     PathSegment,
     PathSegmentSource,
     PathSegmentDestination,
+    SourceType,
     TraverseSortBy,
 )
 
@@ -38,6 +39,7 @@ async def path_search(request: PathRequest) -> PathResponse:
             start_filter=request.start,
             finish_filter=request.finish,
             depth_days=request.depth_days,
+            source_type=request.source.value,
         )
     except Exception as e:
         logger.error(f"NebulaGraph search error: {e}")

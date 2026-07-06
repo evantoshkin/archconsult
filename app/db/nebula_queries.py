@@ -60,11 +60,17 @@ async def execute_nebula_experiment_search(
     start_filter: TraverseFilter,
     finish_filter: TraverseFilter,
     depth_days: int,
+    source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
     from datetime import datetime, timedelta
     
     cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
     logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
+    
+    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+    if source_type == "interface_register":
+        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
     pool = get_nebula_pool()
     
     session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
@@ -80,11 +86,11 @@ async def execute_nebula_experiment_search(
             return {}
         
         # Build optional filter conditions for start (consumer) module/component
-        start_edge_conditions = f'VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"'
+        start_edge_conditions = f'{edge_type}.rsm_document_date > "{cutoff_date}"'
         if start_filter.module_rsm_id:
-            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id == "{start_filter.module_rsm_id}"'
+            start_edge_conditions += f' AND {edge_type}.consumer_module_id == "{start_filter.module_rsm_id}"'
         if start_filter.component_rsm_id:
-            start_edge_conditions += f' AND VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id == "{start_filter.component_rsm_id}"'
+            start_edge_conditions += f' AND {edge_type}.consumer_component_id == "{start_filter.component_rsm_id}"'
         
         system_query = f"""
         FETCH PROP ON SYSTEM "{start_filter.system_rsm_id}"
@@ -103,15 +109,15 @@ async def execute_nebula_experiment_search(
             return {}
         
         edges_query = f"""
-        GO FROM "{start_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL
+        GO FROM "{start_filter.system_rsm_id}" OVER {edge_type}
         WHERE {start_edge_conditions}
         YIELD 
-            VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS document_id,
-            VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS document_date,
-            VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id AS consumer_module_id,
-            VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id AS provider_module_id,
-            VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id AS consumer_component_id,
-            VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id AS provider_component_id
+            {edge_type}.rsm_document_id AS document_id,
+            {edge_type}.rsm_document_date AS document_date,
+            {edge_type}.consumer_module_id AS consumer_module_id,
+            {edge_type}.provider_module_id AS provider_module_id,
+            {edge_type}.consumer_component_id AS consumer_component_id,
+            {edge_type}.provider_component_id AS provider_component_id
         """
         
         logger.info(f"Executing edges query: {edges_query}")
@@ -180,15 +186,15 @@ async def execute_nebula_experiment_search(
         
         if finish_filter.system_rsm_id:
             incoming_query = f"""
-            GO FROM "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY
-            WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}"
+            GO FROM "{finish_filter.system_rsm_id}" OVER {edge_type} REVERSELY
+            WHERE {edge_type}.rsm_document_date > "{cutoff_date}"
             YIELD 
-                VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id AS document_id,
-                VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date AS document_date,
-                VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id AS consumer_module_id,
-                VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id AS provider_module_id,
-                VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id AS consumer_component_id,
-                VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id AS provider_component_id
+                {edge_type}.rsm_document_id AS document_id,
+                {edge_type}.rsm_document_date AS document_date,
+                {edge_type}.consumer_module_id AS consumer_module_id,
+                {edge_type}.provider_module_id AS provider_module_id,
+                {edge_type}.consumer_component_id AS consumer_component_id,
+                {edge_type}.provider_component_id AS provider_component_id
             """
             
             logger.info(f"Executing incoming edges query: {incoming_query}")
@@ -308,9 +314,9 @@ async def execute_nebula_experiment_search(
                                 is_reverse = (edge_directions[i] == "reverse") if i < len(edge_directions) else False
                                 
                                 if not is_reverse:
-                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, VISION_INTERFACE_SYSTEM_LEVEL.data_flow_direction, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, {edge_type}.data_flow_direction, $$ AS target_vertex'
                                 else:
-                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, VISION_INTERFACE_SYSTEM_LEVEL.data_flow_direction, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} REVERSELY WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, {edge_type}.data_flow_direction, $$ AS target_vertex'
                                 
                                 logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
@@ -349,7 +355,7 @@ async def execute_nebula_experiment_search(
                             }
             
             # Query 1: Direct edges (forward direction)
-            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER VISION_INTERFACE_SYSTEM_LEVEL BIDIRECT WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD path AS p'
+            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD path AS p'
             
             logger.info(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
