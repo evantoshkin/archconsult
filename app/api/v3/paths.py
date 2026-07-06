@@ -5,12 +5,12 @@ from app.core.config import settings
 from app.db.nebula_pool import get_nebula_pool
 from app.db.nebula_queries import execute_nebula_experiment_search, fetch_nebula_node_names
 from app.schemas.paths import (
-    ExperimentRequest,
-    ExperimentResponse,
-    ExperimentPathGroup,
-    ExperimentPathSegment,
-    ExperimentPathSegmentSource,
-    ExperimentPathSegmentDestination,
+    PathRequest,
+    PathResponse,
+    PathGroup,
+    PathSegment,
+    PathSegmentSource,
+    PathSegmentDestination,
     TraverseSortBy,
 )
 
@@ -21,18 +21,18 @@ router = APIRouter(prefix="/api/v3", tags=["paths"])
 
 @router.post(
     "/paths",
-    response_model=ExperimentResponse,
+    response_model=PathResponse,
     responses={
         503: {"description": "Database unavailable"},
         504: {"description": "Database timeout"},
         500: {"description": "Internal server error"},
     },
     openapi_extra={
-        "x-mcp-tool-name": "build_experiment_path",
-        "x-mcp-tool-description": "Экспериментальный поиск путей интеграции. Возвращает отрезки source -> destination.",
+        "x-mcp-tool-name": "build_path",
+        "x-mcp-tool-description": "Поиск путей интеграции. Возвращает отрезки source -> destination.",
     },
 )
-async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
+async def path_search(request: PathRequest) -> PathResponse:
     try:
         results = await execute_nebula_experiment_search(
             start_filter=request.start,
@@ -87,6 +87,7 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                 path_data_map[path_key] = {
                     "path": data["path"],
                     "edge_data": data.get("edge_data", []),
+                    "edge_directions": data.get("edge_directions", []),
                     "document_rsm_date_time": result_data.get("document_rsm_date_time"),
                 }
             path_eotar_map[path_key].add(clean_eotar_id)
@@ -108,10 +109,11 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
             data = path_data_map[path_key]
             path_nodes = data["path"]
             edge_data_list = data.get("edge_data", [])
+            edge_directions = data.get("edge_directions", [])
             num_nodes = len(path_nodes)
             document_id = sorted(eotar_ids)[0] if eotar_ids else ""
 
-            segments: list[ExperimentPathSegment] = []
+            segments: list[PathSegment] = []
             for i in range(num_nodes - 1):
                 source_node = path_nodes[i]
                 dest_node = path_nodes[i + 1]
@@ -123,10 +125,26 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
 
                 if i < len(edge_data_list):
                     edge = edge_data_list[i]
-                    source_module_id = edge.get("consumer_module_id", "")
-                    source_component_id = edge.get("consumer_component_id", "")
-                    dest_module_id = edge.get("provider_module_id", "")
-                    dest_component_id = edge.get("provider_component_id", "")
+                    is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
+
+                    if is_reverse:
+                        # Edge goes opposite to path direction
+                        # source (requester) = consumer = nodes[i+1]
+                        # destination = provider = nodes[i]
+                        source_node = path_nodes[i + 1]
+                        dest_node = path_nodes[i]
+                        source_module_id = edge.get("provider_module_id", "")
+                        source_component_id = edge.get("provider_component_id", "")
+                        dest_module_id = edge.get("consumer_module_id", "")
+                        dest_component_id = edge.get("consumer_component_id", "")
+                    else:
+                        # Edge goes same direction as path
+                        # source (requester) = consumer = nodes[i]
+                        # destination = provider = nodes[i+1]
+                        source_module_id = edge.get("consumer_module_id", "")
+                        source_component_id = edge.get("consumer_component_id", "")
+                        dest_module_id = edge.get("provider_module_id", "")
+                        dest_component_id = edge.get("provider_component_id", "")
 
                     if i == 0:
                         if request.start.module_rsm_id:
@@ -145,9 +163,9 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                 dest_names = node_names.get((dest_node, dest_module_id, dest_component_id))
                 dest_system_names = node_names.get((dest_node, "", ""))
 
-                segments.append(ExperimentPathSegment(
+                segments.append(PathSegment(
                     description="",
-                    source=ExperimentPathSegmentSource(
+                    source=PathSegmentSource(
                         system_rsm_id=source_node,
                         system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,
                         module_rsm_id=source_module_id,
@@ -155,7 +173,7 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                         component_rsm_id=source_component_id,
                         component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
                     ),
-                    destination=ExperimentPathSegmentDestination(
+                    destination=PathSegmentDestination(
                         system_rsm_id=dest_node,
                         system_rsm_name=dest_system_names.get("system_rsm_name") if dest_system_names else None,
                         module_rsm_id=dest_module_id,
@@ -215,8 +233,8 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
             parts.append(f"document_rsm_id: {doc_id}")
         if doc_date:
             parts.append(f"document_rsm_date_time: {doc_date}")
-        result.append(ExperimentPathGroup(
+        result.append(PathGroup(
             segments=p["segments"],
             description=" | ".join(parts),
         ))
-    return ExperimentResponse(paths=result)
+    return PathResponse(paths=result)

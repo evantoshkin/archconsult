@@ -308,9 +308,9 @@ async def execute_nebula_experiment_search(
                                 is_reverse = (edge_directions[i] == "reverse") if i < len(edge_directions) else False
                                 
                                 if not is_reverse:
-                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, VISION_INTERFACE_SYSTEM_LEVEL.data_flow_direction, $$ AS target_vertex'
                                 else:
-                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{clean_document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_date > "{cutoff_date}" YIELD VISION_INTERFACE_SYSTEM_LEVEL.consumer_module_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_module_id, VISION_INTERFACE_SYSTEM_LEVEL.consumer_component_id, VISION_INTERFACE_SYSTEM_LEVEL.provider_component_id, VISION_INTERFACE_SYSTEM_LEVEL.data_flow_direction, $$ AS target_vertex'
                                 
                                 logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
@@ -319,7 +319,7 @@ async def execute_nebula_experiment_search(
                                 if edge_result.is_succeeded():
                                     for row_idx in range(edge_result.row_size()):
                                         edge_row = edge_result.row_values(row_idx)
-                                        target_vertex = str(edge_row[4]) if edge_row[4] else ""
+                                        target_vertex = str(edge_row[5]) if edge_row[5] else ""
                                         
                                         if to_node in target_vertex:
                                             edge_data_list.append({
@@ -327,6 +327,7 @@ async def execute_nebula_experiment_search(
                                                 "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                                 "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                                 "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                                "data_flow_direction": str(edge_row[4]).strip('"') if edge_row[4] and str(edge_row[4]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                             })
                                             found = True
                                             break
@@ -337,12 +338,14 @@ async def execute_nebula_experiment_search(
                                         "provider_module_id": "",
                                         "consumer_component_id": "",
                                         "provider_component_id": "",
+                                        "data_flow_direction": "",
                                     })
                             
                             paths_for_document[path_key] = {
                                 "path": nodes,
                                 "distance": len(nodes),
                                 "edge_data": edge_data_list,
+                                "edge_directions": edge_directions,
                             }
             
             # Query 1: Direct edges (forward direction)
@@ -651,7 +654,7 @@ async def execute_nebula_traverse_search(
                             if edge_result.is_succeeded():
                                 for row_idx in range(edge_result.row_size()):
                                     edge_row = edge_result.row_values(row_idx)
-                                    target_vertex = str(edge_row[4]) if edge_row[4] else ""
+                                    target_vertex = str(edge_row[5]) if edge_row[5] else ""
                                     
                                     if to_node in target_vertex:
                                         edge_data_list.append({

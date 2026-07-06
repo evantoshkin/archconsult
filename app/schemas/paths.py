@@ -160,7 +160,7 @@ class TraverseResponse(BaseModel):
     paths: list[TraversePathGroup] = Field(default=[])
 
 
-class ExperimentRequest(BaseModel):
+class PathRequest(BaseModel):
     start: TraverseFilter = Field(
         ...,
         description="Filter for start nodes",
@@ -223,7 +223,7 @@ class ExperimentRequest(BaseModel):
     )
 
 
-class ExperimentPathSegmentSource(BaseModel):
+class PathSegmentSource(BaseModel):
     system_rsm_id: str = ""
     system_rsm_name: Optional[str] = None
     module_rsm_id: str = ""
@@ -232,7 +232,7 @@ class ExperimentPathSegmentSource(BaseModel):
     component_rsm_name: Optional[str] = None
 
 
-class ExperimentPathSegmentDestination(BaseModel):
+class PathSegmentDestination(BaseModel):
     system_rsm_id: str = ""
     system_rsm_name: Optional[str] = None
     module_rsm_id: str = ""
@@ -241,19 +241,19 @@ class ExperimentPathSegmentDestination(BaseModel):
     component_rsm_name: Optional[str] = None
 
 
-class ExperimentPathSegment(BaseModel):
-    source: ExperimentPathSegmentSource
-    destination: ExperimentPathSegmentDestination
+class PathSegment(BaseModel):
+    source: PathSegmentSource
+    destination: PathSegmentDestination
     description: str = ""
 
 
-class ExperimentPathGroup(BaseModel):
-    segments: list[ExperimentPathSegment] = []
+class PathGroup(BaseModel):
+    segments: list[PathSegment] = []
     description: str = ""
 
 
-class ExperimentResponse(BaseModel):
-    paths: list[ExperimentPathGroup]
+class PathResponse(BaseModel):
+    paths: list[PathGroup]
 
 
 class ChildNode(BaseModel):
