@@ -204,6 +204,19 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
             key=lambda x: -x["frequency"]
         )
 
-    return ExperimentResponse(
-        paths=[ExperimentPathGroup(**p) for p in sorted_paths[:request.path_count]]
-    )
+    result = []
+    for p in sorted_paths[:request.path_count]:
+        parts = []
+        freq = p.get("frequency", 0)
+        doc_id = p.get("document_rsm_id")
+        doc_date = p.get("document_rsm_date_time")
+        parts.append(f"frequency: {freq}")
+        if doc_id:
+            parts.append(f"document_rsm_id: {doc_id}")
+        if doc_date:
+            parts.append(f"document_rsm_date_time: {doc_date}")
+        result.append(ExperimentPathGroup(
+            segments=p["segments"],
+            description=" | ".join(parts),
+        ))
+    return ExperimentResponse(paths=result)

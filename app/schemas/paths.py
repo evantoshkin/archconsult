@@ -249,9 +249,7 @@ class ExperimentPathSegment(BaseModel):
 
 class ExperimentPathGroup(BaseModel):
     segments: list[ExperimentPathSegment] = []
-    frequency: int = 0
-    document_rsm_id: Optional[str] = None
-    document_rsm_date_time: Optional[str] = None
+    description: str = ""
 
 
 class ExperimentResponse(BaseModel):
