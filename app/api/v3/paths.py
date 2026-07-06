@@ -130,15 +130,22 @@ async def path_search(request: PathRequest) -> PathResponse:
                     is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
 
                     if is_reverse:
-                        # Edge goes opposite to path direction
-                        # source (requester) = consumer = nodes[i+1]
-                        # destination = provider = nodes[i]
+                        # Edge goes opposite to path direction.
+                        # The intrinsic edge direction is: consumer -> provider
+                        # FIND ALL PATH BIDIRECT returned it reversed, meaning:
+                        #   nodes[i] <- nodes[i+1]
+                        #   (nodes[i+1] is the consumer/requester, nodes[i] is the provider)
+                        # So:
+                        #   source (consumer/requester) = nodes[i+1]
+                        #   destination (provider/responder) = nodes[i]
                         source_node = path_nodes[i + 1]
                         dest_node = path_nodes[i]
-                        source_module_id = edge.get("provider_module_id", "")
-                        source_component_id = edge.get("provider_component_id", "")
-                        dest_module_id = edge.get("consumer_module_id", "")
-                        dest_component_id = edge.get("consumer_component_id", "")
+                        # consumer_module_id belongs to source (consumer)
+                        source_module_id = edge.get("consumer_module_id", "")
+                        source_component_id = edge.get("consumer_component_id", "")
+                        # provider_module_id belongs to destination (provider)
+                        dest_module_id = edge.get("provider_module_id", "")
+                        dest_component_id = edge.get("provider_component_id", "")
                     else:
                         # Edge goes same direction as path
                         # source (requester) = consumer = nodes[i]
