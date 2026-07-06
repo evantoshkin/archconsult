@@ -325,7 +325,7 @@ async def execute_nebula_experiment_search(
                                 if edge_result.is_succeeded():
                                     for row_idx in range(edge_result.row_size()):
                                         edge_row = edge_result.row_values(row_idx)
-                                        target_vertex = str(edge_row[5]) if edge_row[5] else ""
+                                        target_vertex = str(edge_row[4]) if edge_row[4] else ""
                                         
                                         if to_node in target_vertex:
                                             edge_data_list.append({
@@ -658,7 +658,7 @@ async def execute_nebula_traverse_search(
                             if edge_result.is_succeeded():
                                 for row_idx in range(edge_result.row_size()):
                                     edge_row = edge_result.row_values(row_idx)
-                                    target_vertex = str(edge_row[5]) if edge_row[5] else ""
+                                    target_vertex = str(edge_row[4]) if edge_row[4] else ""
                                     
                                     if to_node in target_vertex:
                                         edge_data_list.append({
