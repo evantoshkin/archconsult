@@ -314,9 +314,9 @@ async def execute_nebula_experiment_search(
                                 is_reverse = (edge_directions[i] == "reverse") if i < len(edge_directions) else False
                                 
                                 if not is_reverse:
-                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, {edge_type}.data_flow_direction, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, $$ AS target_vertex'
                                 else:
-                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} REVERSELY WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, {edge_type}.data_flow_direction, $$ AS target_vertex'
+                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} REVERSELY WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id, $$ AS target_vertex'
                                 
                                 logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
@@ -333,7 +333,6 @@ async def execute_nebula_experiment_search(
                                                 "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                                 "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                                 "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                                "data_flow_direction": str(edge_row[4]).strip('"') if edge_row[4] and str(edge_row[4]) not in ["None", "__EMPTY__", '"NULL"'] else "",
                                             })
                                             found = True
                                             break
@@ -344,7 +343,6 @@ async def execute_nebula_experiment_search(
                                         "provider_module_id": "",
                                         "consumer_component_id": "",
                                         "provider_component_id": "",
-                                        "data_flow_direction": "",
                                     })
                             
                             paths_for_document[path_key] = {
