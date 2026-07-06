@@ -223,17 +223,6 @@ class ExperimentRequest(BaseModel):
     )
 
 
-class ExperimentNodePath(BaseModel):
-    system_rsm_id: str = ""
-    system_rsm_name: Optional[str] = None
-    frequency: int = 0
-
-
-class ExperimentNodePaths(BaseModel):
-    incoming: list[ExperimentNodePath] = []
-    outgoing: list[ExperimentNodePath] = []
-
-
 class ExperimentPathSegmentSource(BaseModel):
     system_rsm_id: str = ""
     system_rsm_name: Optional[str] = None
@@ -241,7 +230,6 @@ class ExperimentPathSegmentSource(BaseModel):
     module_rsm_name: Optional[str] = None
     component_rsm_id: str = ""
     component_rsm_name: Optional[str] = None
-    paths: ExperimentNodePaths = Field(default_factory=ExperimentNodePaths)
 
 
 class ExperimentPathSegmentDestination(BaseModel):
@@ -251,7 +239,6 @@ class ExperimentPathSegmentDestination(BaseModel):
     module_rsm_name: Optional[str] = None
     component_rsm_id: str = ""
     component_rsm_name: Optional[str] = None
-    paths: ExperimentNodePaths = Field(default_factory=ExperimentNodePaths)
 
 
 class ExperimentPathSegment(BaseModel):

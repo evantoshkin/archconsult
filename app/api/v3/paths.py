@@ -11,126 +11,12 @@ from app.schemas.paths import (
     ExperimentPathSegment,
     ExperimentPathSegmentSource,
     ExperimentPathSegmentDestination,
-    ExperimentNodePaths,
-    ExperimentNodePath,
     TraverseSortBy,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v3", tags=["paths"])
-
-
-def fetch_node_paths_with_segment_filter(session, source_node: str, dest_node: str, document_id: str, search_incoming: bool = True, search_outgoing: bool = True) -> tuple[dict, dict]:
-    source_result = {
-        "incoming": [],
-        "outgoing": [],
-    }
-    dest_result = {
-        "incoming": [],
-        "outgoing": [],
-    }
-
-    segment_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" AND VISION_INTERFACE_SYSTEM_LEVEL._dst == "{dest_node}" YIELD VISION_INTERFACE_SYSTEM_LEVEL._dst AS dst'
-    logger.info(f"Checking segment {source_node} -> {dest_node} with document_id={document_id}")
-    segment_result = session.execute(segment_query)
-
-    if not (segment_result.is_succeeded() and segment_result.row_size() > 0):
-        logger.info(f"Segment {source_node} -> {dest_node} not found with document_id={document_id}")
-        return source_result, dest_result
-
-    if search_incoming:
-        source_incoming_map: dict[str, dict] = {}
-        source_incoming_query = f'GO FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
-        logger.info(f"Fetching incoming paths for source node {source_node} with document_id={document_id}")
-        source_incoming_result = session.execute(source_incoming_query)
-
-        if not source_incoming_result.is_succeeded():
-            logger.error(f"Source incoming query failed: {source_incoming_result.error_msg()}")
-
-        if source_incoming_result.is_succeeded():
-            for row_idx in range(source_incoming_result.row_size()):
-                row = source_incoming_result.row_values(row_idx)
-                src_id = str(row[0]).strip('"') if row[0] else None
-                system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
-
-                if src_id and src_id != source_node:
-                    if src_id not in source_incoming_map:
-                        source_incoming_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    source_incoming_map[src_id]["frequency"] += 1
-        source_result["incoming"] = sorted(source_incoming_map.values(), key=lambda x: -x["frequency"])[:3]
-
-    if search_outgoing:
-        source_outgoing_map: dict[str, dict] = {}
-        source_outgoing_query = f'GO 1 STEPS FROM "{source_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
-        logger.info(f"Fetching outgoing paths for source node {source_node}")
-        source_outgoing_result = session.execute(source_outgoing_query)
-
-        if source_outgoing_result.is_succeeded():
-            for row_idx in range(source_outgoing_result.row_size()):
-                row = source_outgoing_result.row_values(row_idx)
-                src_id = str(row[0]).strip('"') if row[0] else None
-                system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
-
-                if src_id and src_id != source_node and src_id != dest_node:
-                    if src_id not in source_outgoing_map:
-                        source_outgoing_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    source_outgoing_map[src_id]["frequency"] += 1
-        source_result["outgoing"] = sorted(source_outgoing_map.values(), key=lambda x: -x["frequency"])[:3]
-
-    if search_incoming:
-        dest_incoming_map: dict[str, dict] = {}
-        dest_incoming_query = f'GO FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL REVERSELY WHERE VISION_INTERFACE_SYSTEM_LEVEL.rsm_document_id == "{document_id}" YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
-        logger.info(f"Fetching incoming paths for destination node {dest_node}")
-        dest_incoming_result = session.execute(dest_incoming_query)
-
-        if dest_incoming_result.is_succeeded():
-            for row_idx in range(dest_incoming_result.row_size()):
-                row = dest_incoming_result.row_values(row_idx)
-                src_id = str(row[0]).strip('"') if row[0] else None
-                system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
-
-                if src_id and src_id != dest_node and src_id != source_node:
-                    if src_id not in dest_incoming_map:
-                        dest_incoming_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-        dest_result["incoming"] = sorted(dest_incoming_map.values(), key=lambda x: -x["frequency"])[:3]
-        dest_result["incoming"] = sorted(dest_incoming_map.values(), key=lambda x: -x["frequency"])
-
-    if search_outgoing:
-        dest_outgoing_map: dict[str, dict] = {}
-        dest_outgoing_query = f'GO 1 STEPS FROM "{dest_node}" OVER VISION_INTERFACE_SYSTEM_LEVEL YIELD id($$) AS src_id, $$.SYSTEM.name AS src_name'
-        logger.info(f"Fetching outgoing paths for destination node {dest_node}")
-        dest_outgoing_result = session.execute(dest_outgoing_query)
-
-        if dest_outgoing_result.is_succeeded():
-            for row_idx in range(dest_outgoing_result.row_size()):
-                row = dest_outgoing_result.row_values(row_idx)
-                src_id = str(row[0]).strip('"') if row[0] else None
-                system_name = str(row[1]).strip('"') if row[1] and str(row[1]) not in ["None", "__EMPTY__", '"NULL"'] else None
-
-                if src_id and src_id != dest_node:
-                    if src_id not in dest_outgoing_map:
-                        dest_outgoing_map[src_id] = {
-                            "system_rsm_id": src_id,
-                            "system_rsm_name": system_name,
-                            "frequency": 0,
-                        }
-                    dest_outgoing_map[src_id]["frequency"] += 1
-        dest_result["outgoing"] = sorted(dest_outgoing_map.values(), key=lambda x: -x["frequency"])[:3]
-
-    return source_result, dest_result
 
 
 @router.post(
@@ -259,22 +145,6 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                 dest_names = node_names.get((dest_node, dest_module_id, dest_component_id))
                 dest_system_names = node_names.get((dest_node, "", ""))
 
-                source_paths_data, dest_paths_data = fetch_node_paths_with_segment_filter(
-                    session, source_node, dest_node, document_id,
-                    search_incoming=request.search_incoming,
-                    search_outgoing=request.search_outgoing
-                )
-
-                source_paths = ExperimentNodePaths(
-                    incoming=[ExperimentNodePath(**p) for p in source_paths_data.get("incoming", [])],
-                    outgoing=[ExperimentNodePath(**p) for p in source_paths_data.get("outgoing", [])],
-                )
-
-                dest_paths = ExperimentNodePaths(
-                    incoming=[ExperimentNodePath(**p) for p in dest_paths_data.get("incoming", [])],
-                    outgoing=[ExperimentNodePath(**p) for p in dest_paths_data.get("outgoing", [])],
-                )
-
                 segments.append(ExperimentPathSegment(
                     source=ExperimentPathSegmentSource(
                         system_rsm_id=source_node,
@@ -283,7 +153,6 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                         module_rsm_name=source_names.get("module_rsm_name") if source_names else None,
                         component_rsm_id=source_component_id,
                         component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
-                        paths=source_paths,
                     ),
                     destination=ExperimentPathSegmentDestination(
                         system_rsm_id=dest_node,
@@ -292,7 +161,6 @@ async def experiment_search(request: ExperimentRequest) -> ExperimentResponse:
                         module_rsm_name=dest_names.get("module_rsm_name") if dest_names else None,
                         component_rsm_id=dest_component_id,
                         component_rsm_name=dest_names.get("component_rsm_name") if dest_names else None,
-                        paths=dest_paths,
                     ),
                 ))
 
