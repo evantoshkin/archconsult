@@ -162,16 +162,16 @@ class TraverseResponse(BaseModel):
 
 class SourceType(str, Enum):
     VISION = "vision"
-    INTERFACE_REGISTER = "interface_register"
+    INTERFACE_REGISTRY = "interface_registry"
 
 
 class PathRequest(BaseModel):
     source: SourceType = Field(
         default=SourceType.VISION,
-        description="Source type for path search: vision (VISION_INTERFACE_SYSTEM_LEVEL) or interface_register (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
+        description="Source type for path search: vision (VISION_INTERFACE_SYSTEM_LEVEL) or interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
         json_schema_extra={
             "x-mcp-tool-arg-name": "source",
-            "x-mcp-tool-arg-description": "Источник данных: vision (VISION_INTERFACE_SYSTEM_LEVEL) или interface_register (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
+            "x-mcp-tool-arg-description": "Источник данных: vision (VISION_INTERFACE_SYSTEM_LEVEL) или interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
         }
     )
     start: TraverseFilter = Field(

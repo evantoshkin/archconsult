@@ -68,7 +68,7 @@ async def execute_nebula_experiment_search(
     logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
     
     edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-    if source_type == "interface_register":
+    if source_type == "interface_registry":
         edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
     logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
     pool = get_nebula_pool()
