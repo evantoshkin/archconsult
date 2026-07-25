@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
 from app.db.nebula_pool import get_nebula_pool
-from app.db.nebula_queries import execute_nebula_experiment_search, fetch_nebula_node_names
+from app.db.nebula_queries import execute_nebula_experiment_search, fetch_nebula_node_names, fetch_one_hop_neighbors
 from app.schemas.paths import (
     PathRequest,
     PathResponse,
@@ -34,19 +34,33 @@ router = APIRouter(prefix="/api/v3", tags=["paths"])
     },
 )
 async def path_search(request: PathRequest) -> PathResponse:
-    try:
-        results = await execute_nebula_experiment_search(
-            start_filter=request.start,
-            finish_filter=request.finish,
-            depth_days=request.depth_days,
-            source_type=request.source.value,
-        )
-    except Exception as e:
-        logger.error(f"NebulaGraph search error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "NEBULA_ERROR", "message": str(e)},
-        )
+    if not request.finish.system_rsm_id:
+        try:
+            results = await fetch_one_hop_neighbors(
+                start_filter=request.start,
+                depth_days=request.depth_days,
+                source_type=request.source.value,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph one-hop search error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "NEBULA_ERROR", "message": str(e)},
+            )
+    else:
+        try:
+            results = await execute_nebula_experiment_search(
+                start_filter=request.start,
+                finish_filter=request.finish,
+                depth_days=request.depth_days,
+                source_type=request.source.value,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph search error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "NEBULA_ERROR", "message": str(e)},
+            )
 
 
 
