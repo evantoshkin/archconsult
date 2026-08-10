@@ -133,6 +133,7 @@ class ChildNode(BaseModel):
     label: str = ""
     rsm_id: str = ""
     rsm_name: Optional[str] = None
+    description: Optional[str] = None
 
 
 class ChildTreeItem(BaseModel):

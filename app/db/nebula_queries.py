@@ -266,7 +266,7 @@ async def execute_nebula_experiment_search(
                             }
             
             # Query 1: Direct edges (forward direction)
-            path_query_forward = f'FIND ALL PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
+            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
             
             logger.info(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
@@ -557,11 +557,12 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
     session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
     
     def parse_vertex(vertex_str: str) -> dict:
-        """Parse vertex string and extract label and name."""
+        """Parse vertex string and extract label, name and description."""
         import re
         
         label = ""
         name = None
+        description = None
         
         # Extract label from vertex string (e.g., :SYSTEM, :MODULE, :COMPONENT)
         label_match = re.search(r':([A-Za-z]+)[{]', vertex_str)
@@ -573,9 +574,15 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
         if name_match:
             name = name_match.group(1)
         
+        # Extract description property
+        description_match = re.search(r'(?:description|rsm_description):\s*"([^"]*)"', vertex_str)
+        if description_match:
+            description = description_match.group(1)
+        
         return {
             "label": label,
             "rsm_name": name,
+            "description": description,
         }
     
     def fetch_children_recursive(node_id: str, visited: set) -> list:
