@@ -214,12 +214,12 @@ async def execute_nebula_experiment_search(
                                 if from_node == to_node:
                                     logger.info(f"Skipping self-loop edge query: {from_node} == {to_node}")
                                     edge_cache_key = (from_node, to_node, is_reverse)
-                                    edge_cache[edge_cache_key] = {
+                                    edge_cache[edge_cache_key] = [{
                                         "consumer_module_id": "",
                                         "provider_module_id": "",
                                         "consumer_component_id": "",
                                         "provider_component_id": "",
-                                    }
+                                    }]
                                     edge_data_list.append(edge_cache[edge_cache_key])
                                     continue
 
@@ -237,26 +237,39 @@ async def execute_nebula_experiment_search(
                                 logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
                                 
-                                found = False
-                                if edge_result.is_succeeded() and edge_result.row_size() > 0:
-                                    edge_row = edge_result.row_values(0)
-                                    edge_data_list.append({
-                                        "consumer_module_id": str(edge_row[0]).strip('"') if edge_row[0] and str(edge_row[0]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                        "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                        "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                        "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                    })
-                                    found = True
+                                combos: list[dict] = []
+                                seen: set[tuple] = set()
+                                if edge_result.is_succeeded():
+                                    for edge_row_idx in range(edge_result.row_size()):
+                                        edge_row = edge_result.row_values(edge_row_idx)
+                                        if len(edge_row) < 4:
+                                            continue
+                                        combo = {
+                                            "consumer_module_id": str(edge_row[0]).strip('"') if edge_row[0] and str(edge_row[0]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                            "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                            "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                            "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                                        }
+                                        combo_key = (
+                                            combo["consumer_module_id"],
+                                            combo["consumer_component_id"],
+                                            combo["provider_module_id"],
+                                            combo["provider_component_id"],
+                                        )
+                                        if combo_key not in seen:
+                                            seen.add(combo_key)
+                                            combos.append(combo)
                                 
-                                if not found:
-                                    edge_data_list.append({
+                                if not combos:
+                                    combos = [{
                                         "consumer_module_id": "",
                                         "provider_module_id": "",
                                         "consumer_component_id": "",
                                         "provider_component_id": "",
-                                    })
+                                    }]
                                 
-                                edge_cache[edge_cache_key] = edge_data_list[-1]
+                                edge_data_list.append(combos)
+                                edge_cache[edge_cache_key] = combos
                             
                             paths_for_document[path_key] = {
                                 "path": nodes,
@@ -644,6 +657,7 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
                 "label": parsed["label"],
                 "rsm_id": rsm_id,
                 "rsm_name": parsed["rsm_name"],
+                "description": parsed["description"],
             },
             "children": children
         }
@@ -651,3 +665,5 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
     except Exception as e:
         logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
         return None
+    finally:
+        session.release()

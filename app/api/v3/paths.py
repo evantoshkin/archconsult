@@ -87,6 +87,12 @@ async def path_search(request: PathRequest) -> PathResponse:
                 path_data_map[path_key]["document_rsm_date_time"] = new_date
     # Collect all (node_id, module_id, component_id) combinations needed for name lookups.
     # Must run after path_data_map is populated.
+    def to_combos(raw):
+        """Normalize an edge data entry to a list of (module+component) combinations."""
+        if isinstance(raw, dict):
+            return [raw]
+        return list(raw) if isinstance(raw, (list, tuple)) else []
+
     all_nodes_set: set[tuple[str, str, str]] = set()
     for path_key, data in path_data_map.items():
         path_nodes = data["path"]
@@ -97,38 +103,46 @@ async def path_search(request: PathRequest) -> PathResponse:
         for i in range(num_nodes - 1):
             source_node = path_nodes[i]
             dest_node = path_nodes[i + 1]
-            source_module_id = ""
-            source_component_id = ""
-            dest_module_id = ""
-            dest_component_id = ""
+            combos = to_combos(edge_data_list[i]) if i < len(edge_data_list) else []
+            is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
 
-            if i < len(edge_data_list):
-                edge = edge_data_list[i]
-                is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
-
+            if combos:
                 if is_reverse:
-                    source_node = path_nodes[i + 1]
-                    dest_node = path_nodes[i]
-                    source_module_id = edge.get("consumer_module_id", "")
-                    source_component_id = edge.get("consumer_component_id", "")
-                    dest_module_id = edge.get("provider_module_id", "")
-                    dest_component_id = edge.get("provider_component_id", "")
+                    # Edge opposite to path direction: nodes[i] <- nodes[i+1].
+                    # source (consumer) = nodes[i+1], destination (provider) = nodes[i].
+                    eff_source_node = path_nodes[i + 1]
+                    eff_dest_node = path_nodes[i]
                 else:
-                    source_module_id = edge.get("consumer_module_id", "")
-                    source_component_id = edge.get("consumer_component_id", "")
-                    dest_module_id = edge.get("provider_module_id", "")
-                    dest_component_id = edge.get("provider_component_id", "")
+                    eff_source_node = path_nodes[i]
+                    eff_dest_node = path_nodes[i + 1]
+            else:
+                eff_source_node = path_nodes[i]
+                eff_dest_node = path_nodes[i + 1]
 
-            all_nodes_set.add((source_node, source_module_id, source_component_id))
-            all_nodes_set.add((source_node, "", ""))
-            all_nodes_set.add((dest_node, dest_module_id, dest_component_id))
-            all_nodes_set.add((dest_node, "", ""))
+            for combo in combos:
+                if is_reverse:
+                    source_module_id = combo.get("consumer_module_id", "")
+                    source_component_id = combo.get("consumer_component_id", "")
+                    dest_module_id = combo.get("provider_module_id", "")
+                    dest_component_id = combo.get("provider_component_id", "")
+                else:
+                    source_module_id = combo.get("consumer_module_id", "")
+                    source_component_id = combo.get("consumer_component_id", "")
+                    dest_module_id = combo.get("provider_module_id", "")
+                    dest_component_id = combo.get("provider_component_id", "")
+
+                all_nodes_set.add((eff_source_node, source_module_id, source_component_id))
+                all_nodes_set.add((eff_dest_node, dest_module_id, dest_component_id))
+
+            # Always add the bare system nodes for system-level name lookups.
+            all_nodes_set.add((eff_source_node, "", ""))
+            all_nodes_set.add((eff_dest_node, "", ""))
 
             # Also add overridden module/component IDs from request filters
             if i == 0 and request.start.module_rsm_id:
-                all_nodes_set.add((source_node, request.start.module_rsm_id, source_component_id))
+                all_nodes_set.add((eff_source_node, request.start.module_rsm_id, request.start.component_rsm_id))
             if i == num_nodes - 2 and request.finish.module_rsm_id:
-                all_nodes_set.add((dest_node, request.finish.module_rsm_id, dest_component_id))
+                all_nodes_set.add((eff_dest_node, request.finish.module_rsm_id, request.finish.component_rsm_id))
 
     # Also add the finish system node names if finish filter is provided
     if request.finish.system_rsm_id:
@@ -158,45 +172,31 @@ async def path_search(request: PathRequest) -> PathResponse:
             segments: list[PathSegment] = []
             logger.info(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
             for i in range(num_nodes - 1):
-                source_node = path_nodes[i]
-                dest_node = path_nodes[i + 1]
+                is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
 
-                source_module_id = ""
-                source_component_id = ""
-                dest_module_id = ""
-                dest_component_id = ""
+                if is_reverse:
+                    # Edge opposite to path direction: nodes[i] <- nodes[i+1].
+                    # source (consumer/requester) = nodes[i+1], destination (provider/responder) = nodes[i].
+                    eff_source_node = path_nodes[i + 1]
+                    eff_dest_node = path_nodes[i]
+                else:
+                    eff_source_node = path_nodes[i]
+                    eff_dest_node = path_nodes[i + 1]
 
-                if i < len(edge_data_list):
-                    edge = edge_data_list[i]
-                    is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
+                combos = to_combos(edge_data_list[i]) if i < len(edge_data_list) else []
+                if not combos:
+                    combos = [{
+                        "consumer_module_id": "",
+                        "provider_module_id": "",
+                        "consumer_component_id": "",
+                        "provider_component_id": "",
+                    }]
 
-                    if is_reverse:
-                        # Edge goes opposite to path direction.
-                        # The intrinsic edge direction is: consumer -> provider
-                        # FIND ALL PATH BIDIRECT returned it reversed, meaning:
-                        #   nodes[i] <- nodes[i+1]
-                        #   (nodes[i+1] is the consumer/requester, nodes[i] is the provider)
-                        # So:
-                        #   source (consumer/requester) = nodes[i+1]
-                        #   destination (provider/responder) = nodes[i]
-                        source_node = path_nodes[i + 1]
-                        dest_node = path_nodes[i]
-                        # consumer_module_id belongs to source (consumer)
-                        source_module_id = edge.get("consumer_module_id", "")
-                        source_component_id = edge.get("consumer_component_id", "")
-                        # provider_module_id belongs to destination (provider)
-                        dest_module_id = edge.get("provider_module_id", "")
-                        dest_component_id = edge.get("provider_component_id", "")
-                        logger.info(f"  Segment {i}: REVERSE: {path_nodes[i]} <- {path_nodes[i+1]}  |  source={source_node}(consumer) -> dest={dest_node}(provider)")
-                    else:
-                        # Edge goes same direction as path
-                        # source (requester) = consumer = nodes[i]
-                        # destination = provider = nodes[i+1]
-                        source_module_id = edge.get("consumer_module_id", "")
-                        source_component_id = edge.get("consumer_component_id", "")
-                        dest_module_id = edge.get("provider_module_id", "")
-                        dest_component_id = edge.get("provider_component_id", "")
-                        logger.info(f"  Segment {i}: FORWARD: {path_nodes[i]} -> {path_nodes[i+1]}  |  source={source_node}(consumer) -> dest={dest_node}(provider)")
+                for combo in combos:
+                    source_module_id = combo.get("consumer_module_id", "")
+                    source_component_id = combo.get("consumer_component_id", "")
+                    dest_module_id = combo.get("provider_module_id", "")
+                    dest_component_id = combo.get("provider_component_id", "")
 
                     if i == 0:
                         if request.start.module_rsm_id:
@@ -210,30 +210,36 @@ async def path_search(request: PathRequest) -> PathResponse:
                         if request.finish.component_rsm_id:
                             dest_component_id = request.finish.component_rsm_id
 
-                source_names = node_names.get((source_node, source_module_id, source_component_id))
-                source_system_names = node_names.get((source_node, "", ""))
-                dest_names = node_names.get((dest_node, dest_module_id, dest_component_id))
-                dest_system_names = node_names.get((dest_node, "", ""))
+                    logger.info(
+                        f"  Segment {i} ({'REVERSE' if is_reverse else 'FORWARD'}): "
+                        f"source={eff_source_node}(mod={source_module_id},comp={source_component_id}) "
+                        f"-> dest={eff_dest_node}(mod={dest_module_id},comp={dest_component_id})"
+                    )
 
-                segments.append(PathSegment(
-                    description="",
-                    source=PathSegmentSource(
-                        system_rsm_id=source_node,
-                        system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,
-                        module_rsm_id=source_module_id,
-                        module_rsm_name=source_names.get("module_rsm_name") if source_names else None,
-                        component_rsm_id=source_component_id,
-                        component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
-                    ),
-                    destination=PathSegmentDestination(
-                        system_rsm_id=dest_node,
-                        system_rsm_name=dest_system_names.get("system_rsm_name") if dest_system_names else None,
-                        module_rsm_id=dest_module_id,
-                        module_rsm_name=dest_names.get("module_rsm_name") if dest_names else None,
-                        component_rsm_id=dest_component_id,
-                        component_rsm_name=dest_names.get("component_rsm_name") if dest_names else None,
-                    ),
-                ))
+                    source_names = node_names.get((eff_source_node, source_module_id, source_component_id))
+                    source_system_names = node_names.get((eff_source_node, "", ""))
+                    dest_names = node_names.get((eff_dest_node, dest_module_id, dest_component_id))
+                    dest_system_names = node_names.get((eff_dest_node, "", ""))
+
+                    segments.append(PathSegment(
+                        description="",
+                        source=PathSegmentSource(
+                            system_rsm_id=eff_source_node,
+                            system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,
+                            module_rsm_id=source_module_id,
+                            module_rsm_name=source_names.get("module_rsm_name") if source_names else None,
+                            component_rsm_id=source_component_id,
+                            component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
+                        ),
+                        destination=PathSegmentDestination(
+                            system_rsm_id=eff_dest_node,
+                            system_rsm_name=dest_system_names.get("system_rsm_name") if dest_system_names else None,
+                            module_rsm_id=dest_module_id,
+                            module_rsm_name=dest_names.get("module_rsm_name") if dest_names else None,
+                            component_rsm_id=dest_component_id,
+                            component_rsm_name=dest_names.get("component_rsm_name") if dest_names else None,
+                        ),
+                    ))
 
             sorted_eotar_ids = sorted(eotar_ids)
             first_eotar_id = sorted_eotar_ids[0] if sorted_eotar_ids else ""
