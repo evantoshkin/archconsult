@@ -465,6 +465,153 @@ async def fetch_one_hop_neighbors(
         session.release()
 
 
+async def fetch_one_hop_neighbors_to_finish(
+    finish_filter: TraverseFilter,
+    depth_days: int,
+    source_type: str = "vision",
+) -> dict[str, dict[str, dict]]:
+    from datetime import datetime, timedelta
+
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+    if source_type == "interface_registry":
+        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+
+    pool = get_nebula_pool()
+    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+
+    try:
+        result = session.execute(f'USE {settings.NEBULA_SPACE};')
+        if not result.is_succeeded():
+            return {}
+
+        if not finish_filter.system_rsm_id:
+            return {}
+
+        edge_date_conditions = '{et}.rsm_document_date > "{cd}"'.format(et=edge_type, cd=cutoff_date)
+        edge_filter_conditions = ""
+        if finish_filter.module_rsm_id:
+            edge_filter_conditions += ' AND {et}.provider_module_id == "{mid}"'.format(et=edge_type, mid=finish_filter.module_rsm_id)
+        if finish_filter.component_rsm_id:
+            edge_filter_conditions += ' AND {et}.provider_component_id == "{cid}"'.format(et=edge_type, cid=finish_filter.component_rsm_id)
+
+        results: dict[str, dict[str, dict]] = {}
+
+        def _normalize(val: str | None) -> str | None:
+            if not val:
+                return None
+            stripped = val.strip('"').strip()
+            if stripped in ("", "None", "__EMPTY__", "NULL"):
+                return None
+            return stripped
+
+        def _process_rows(result, direction: str):
+            if not result.is_succeeded():
+                return
+            for row_index in range(result.row_size()):
+                row = result.row_values(row_index)
+                if len(row) < 7:
+                    continue
+
+                document_id = str(row[0]) if row[0] else None
+                if not document_id or document_id in ("None", "__EMPTY__"):
+                    continue
+
+                document_date = str(row[1]) if row[1] else None
+                consumer_module_id = _normalize(str(row[2]) if row[2] else None)
+                provider_module_id = _normalize(str(row[3]) if row[3] else None)
+                consumer_component_id = _normalize(str(row[4]) if row[4] else None)
+                provider_component_id = _normalize(str(row[5]) if row[5] else None)
+                neighbor_id = str(row[6]).strip('"') if row[6] else None
+
+                if not neighbor_id or neighbor_id == finish_filter.system_rsm_id:
+                    continue
+
+                document_date_clean = None
+                if document_date and document_date not in ("None", "__EMPTY__"):
+                    document_date_clean = document_date.strip('"').strip()
+
+                if direction == "forward":
+                    # Forward edge: finish is provider/destination, neighbor is consumer/source.
+                    nodes = [neighbor_id, finish_filter.system_rsm_id]
+                    edge_data = {
+                        "consumer_module_id": consumer_module_id or "",
+                        "provider_module_id": provider_module_id or "",
+                        "consumer_component_id": consumer_component_id or "",
+                        "provider_component_id": provider_component_id or "",
+                    }
+                    edge_directions = ["forward"]
+                else:
+                    # Reverse edge: finish is consumer/destination, neighbor is provider/source.
+                    nodes = [neighbor_id, finish_filter.system_rsm_id]
+                    edge_data = {
+                        "consumer_module_id": consumer_module_id or "",
+                        "provider_module_id": provider_module_id or "",
+                        "consumer_component_id": consumer_component_id or "",
+                        "provider_component_id": provider_component_id or "",
+                    }
+                    edge_directions = ["reverse"]
+
+                path_key = tuple(nodes)
+
+                if document_id not in results:
+                    results[document_id] = {
+                        "paths": {},
+                        "document_rsm_date_time": None,
+                    }
+
+                if path_key not in results[document_id]["paths"]:
+                    results[document_id]["paths"][path_key] = {
+                        "path": nodes,
+                        "distance": 2,
+                        "edge_data": [edge_data],
+                        "edge_directions": edge_directions,
+                    }
+
+                existing_date = results[document_id].get("document_rsm_date_time")
+                if document_date_clean and (not existing_date or document_date_clean > existing_date):
+                    results[document_id]["document_rsm_date_time"] = document_date_clean
+
+        # Forward edges: finish=provider/destination, neighbor=consumer/source
+        forward_query = (
+            'GO FROM "' + finish_filter.system_rsm_id + '" OVER ' + edge_type + ' REVERSELY '
+            'WHERE ' + edge_date_conditions + edge_filter_conditions + ' '
+            'YIELD ' + edge_type + '.rsm_document_id AS document_id, '
+            + edge_type + '.rsm_document_date AS document_date, '
+            + edge_type + '.consumer_module_id AS consumer_module_id, '
+            + edge_type + '.provider_module_id AS provider_module_id, '
+            + edge_type + '.consumer_component_id AS consumer_component_id, '
+            + edge_type + '.provider_component_id AS provider_component_id, '
+            'id($$) AS neighbor_id'
+        )
+        logger.info(f"Finish-anchored forward query: {forward_query}")
+        _process_rows(session.execute(forward_query), "forward")
+
+        # Reverse edges: finish=consumer/destination, neighbor=provider/source
+        reverse_query = (
+            'GO FROM "' + finish_filter.system_rsm_id + '" OVER ' + edge_type + ' '
+            'WHERE ' + edge_date_conditions + edge_filter_conditions + ' '
+            'YIELD ' + edge_type + '.rsm_document_id AS document_id, '
+            + edge_type + '.rsm_document_date AS document_date, '
+            + edge_type + '.consumer_module_id AS consumer_module_id, '
+            + edge_type + '.provider_module_id AS provider_module_id, '
+            + edge_type + '.consumer_component_id AS consumer_component_id, '
+            + edge_type + '.provider_component_id AS provider_component_id, '
+            'id($$) AS neighbor_id'
+        )
+        logger.info(f"Finish-anchored reverse query: {reverse_query}")
+        _process_rows(session.execute(reverse_query), "reverse")
+
+        return results
+
+    except Exception as e:
+        logger.error(f"NebulaGraph finish-anchored one-hop query error: {e}")
+        return {}
+    finally:
+        session.release()
+
+
 async def fetch_nebula_node_names(
     nodes: list[tuple[str, str, str]]
 ) -> dict[tuple, dict]:

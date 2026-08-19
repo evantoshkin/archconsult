@@ -3,7 +3,12 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import settings
 from app.db.nebula_pool import get_nebula_pool
-from app.db.nebula_queries import execute_nebula_experiment_search, fetch_nebula_node_names, fetch_one_hop_neighbors
+from app.db.nebula_queries import (
+    execute_nebula_experiment_search,
+    fetch_nebula_node_names,
+    fetch_one_hop_neighbors,
+    fetch_one_hop_neighbors_to_finish,
+)
 from app.schemas.paths import (
     PathRequest,
     PathResponse,
@@ -12,6 +17,7 @@ from app.schemas.paths import (
     PathSegmentSource,
     PathSegmentDestination,
     SourceType,
+    TraverseFilter,
     TraverseSortBy,
 )
 
@@ -34,10 +40,13 @@ router = APIRouter(prefix="/api/v3", tags=["paths"])
     },
 )
 async def path_search(request: PathRequest) -> PathResponse:
-    if not request.finish.system_rsm_id:
+    start = request.start or TraverseFilter()
+    finish = request.finish or TraverseFilter()
+
+    if not finish.system_rsm_id and start.system_rsm_id:
         try:
             results = await fetch_one_hop_neighbors(
-                start_filter=request.start,
+                start_filter=start,
                 depth_days=request.depth_days,
                 source_type=request.source.value,
             )
@@ -47,11 +56,11 @@ async def path_search(request: PathRequest) -> PathResponse:
                 status_code=500,
                 detail={"code": "NEBULA_ERROR", "message": str(e)},
             )
-    else:
+    elif start.system_rsm_id and finish.system_rsm_id:
         try:
             results = await execute_nebula_experiment_search(
-                start_filter=request.start,
-                finish_filter=request.finish,
+                start_filter=start,
+                finish_filter=finish,
                 depth_days=request.depth_days,
                 source_type=request.source.value,
             )
@@ -61,6 +70,21 @@ async def path_search(request: PathRequest) -> PathResponse:
                 status_code=500,
                 detail={"code": "NEBULA_ERROR", "message": str(e)},
             )
+    elif finish.system_rsm_id and not start.system_rsm_id:
+        try:
+            results = await fetch_one_hop_neighbors_to_finish(
+                finish_filter=finish,
+                depth_days=request.depth_days,
+                source_type=request.source.value,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph finish-anchored one-hop search error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "NEBULA_ERROR", "message": str(e)},
+            )
+    else:
+        results = {}
 
 
 
@@ -139,14 +163,14 @@ async def path_search(request: PathRequest) -> PathResponse:
             all_nodes_set.add((eff_dest_node, "", ""))
 
             # Also add overridden module/component IDs from request filters
-            if i == 0 and request.start.module_rsm_id:
-                all_nodes_set.add((eff_source_node, request.start.module_rsm_id, request.start.component_rsm_id))
-            if i == num_nodes - 2 and request.finish.module_rsm_id:
-                all_nodes_set.add((eff_dest_node, request.finish.module_rsm_id, request.finish.component_rsm_id))
+            if i == 0 and start.module_rsm_id:
+                all_nodes_set.add((eff_source_node, start.module_rsm_id, start.component_rsm_id))
+            if i == num_nodes - 2 and finish.module_rsm_id:
+                all_nodes_set.add((eff_dest_node, finish.module_rsm_id, finish.component_rsm_id))
 
     # Also add the finish system node names if finish filter is provided
-    if request.finish.system_rsm_id:
-        all_nodes_set.add((request.finish.system_rsm_id, "", ""))
+    if finish.system_rsm_id:
+        all_nodes_set.add((finish.system_rsm_id, "", ""))
 
     all_nodes = list(all_nodes_set)
 
@@ -199,16 +223,16 @@ async def path_search(request: PathRequest) -> PathResponse:
                     dest_component_id = combo.get("provider_component_id", "")
 
                     if i == 0:
-                        if request.start.module_rsm_id:
-                            source_module_id = request.start.module_rsm_id
-                        if request.start.component_rsm_id:
-                            source_component_id = request.start.component_rsm_id
+                        if start.module_rsm_id:
+                            source_module_id = start.module_rsm_id
+                        if start.component_rsm_id:
+                            source_component_id = start.component_rsm_id
 
                     if i == num_nodes - 2:
-                        if request.finish.module_rsm_id:
-                            dest_module_id = request.finish.module_rsm_id
-                        if request.finish.component_rsm_id:
-                            dest_component_id = request.finish.component_rsm_id
+                        if finish.module_rsm_id:
+                            dest_module_id = finish.module_rsm_id
+                        if finish.component_rsm_id:
+                            dest_component_id = finish.component_rsm_id
 
                     logger.info(
                         f"  Segment {i} ({'REVERSE' if is_reverse else 'FORWARD'}): "

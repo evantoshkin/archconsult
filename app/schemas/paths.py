@@ -51,16 +51,16 @@ class PathRequest(BaseModel):
             "x-mcp-tool-arg-description": "Источник данных: vision (VISION_INTERFACE_SYSTEM_LEVEL) или interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
         }
     )
-    start: TraverseFilter = Field(
-        ...,
+    start: Optional[TraverseFilter] = Field(
+        None,
         description="Filter for start nodes",
         json_schema_extra={
             "x-mcp-tool-arg-name": "start",
             "x-mcp-tool-arg-description": "Фильтр для начальных узлов поиска пути",
         }
     )
-    finish: TraverseFilter = Field(
-        ...,
+    finish: Optional[TraverseFilter] = Field(
+        None,
         description="Filter for finish nodes",
         json_schema_extra={
             "x-mcp-tool-arg-name": "finish",
