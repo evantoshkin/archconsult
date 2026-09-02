@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     NEBULA_SPACE: str = "RSM"
 
     SEARCH_DEPTH_DAYS: int = 30
-    MAX_PATH_DEPTH: int = 10
+    MAX_PATH_DEPTH: int = 7
 
     LOG_LEVEL: str = "INFO"
     DB_STATEMENT_TIMEOUT_MS: int = 30000
