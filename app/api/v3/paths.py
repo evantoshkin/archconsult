@@ -194,7 +194,7 @@ async def path_search(request: PathRequest) -> PathResponse:
             document_id = sorted(eotar_ids)[0] if eotar_ids else ""
 
             segments: list[PathSegment] = []
-            logger.info(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
+            logger.debug(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
             for i in range(num_nodes - 1):
                 is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
 
@@ -234,7 +234,7 @@ async def path_search(request: PathRequest) -> PathResponse:
                         if finish.component_rsm_id:
                             dest_component_id = finish.component_rsm_id
 
-                    logger.info(
+                    logger.debug(
                         f"  Segment {i} ({'REVERSE' if is_reverse else 'FORWARD'}): "
                         f"source={eff_source_node}(mod={source_module_id},comp={source_component_id}) "
                         f"-> dest={eff_dest_node}(mod={dest_module_id},comp={dest_component_id})"
