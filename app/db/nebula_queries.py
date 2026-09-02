@@ -51,7 +51,7 @@ async def execute_nebula_experiment_search(
         YIELD vertex AS v
         """
         
-        logger.info(f"Executing system query: {system_query}")
+        logger.debug(f"Executing system query: {system_query}")
         system_result = session.execute(system_query)
         
         if not system_result.is_succeeded():
@@ -128,7 +128,7 @@ async def execute_nebula_experiment_search(
             {edge_type}.provider_component_id AS provider_component_id
         """
         
-        logger.info(f"Executing start edges query (BIDIRECT): {edges_query}")
+        logger.debug(f"Executing start edges query (BIDIRECT): {edges_query}")
         collect_document_data(session.execute(edges_query), outgoing_document_data, "start_bidirect")
         
         logger.info(f"Found {len(outgoing_document_data)} document_ids from start system (BIDIRECT)")
@@ -148,7 +148,7 @@ async def execute_nebula_experiment_search(
                 {edge_type}.provider_component_id AS provider_component_id
             """
             
-            logger.info(f"Executing finish edges query (BIDIRECT): {incoming_query}")
+            logger.debug(f"Executing finish edges query (BIDIRECT): {incoming_query}")
             collect_document_data(session.execute(incoming_query), incoming_document_data, "finish_bidirect")
             
             logger.info(f"Found {len(incoming_document_data)} document_ids to finish system (BIDIRECT)")
@@ -234,7 +234,7 @@ async def execute_nebula_experiment_search(
                                 else:
                                     edge_query = f'GO FROM "{from_node}" OVER {edge_type} REVERSELY WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" AND id($$) == "{to_node}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id'
                                 
-                                logger.info(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
+                                logger.debug(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
                                 edge_result = session.execute(edge_query)
                                 
                                 combos: list[dict] = []
@@ -281,7 +281,7 @@ async def execute_nebula_experiment_search(
             # Query 1: Direct edges (forward direction)
             path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
             
-            logger.info(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
+            logger.debug(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
             process_path_result(path_result_forward)
             
@@ -438,7 +438,7 @@ async def fetch_one_hop_neighbors(
             + edge_type + '.provider_component_id AS provider_component_id, '
             'id($$) AS neighbor_id'
         )
-        logger.info(f"One-hop forward query: {forward_query}")
+        logger.debug(f"One-hop forward query: {forward_query}")
         _process_rows(session.execute(forward_query), "forward")
 
         # Reverse edges: start=provider, neighbor=consumer
@@ -453,7 +453,7 @@ async def fetch_one_hop_neighbors(
             + edge_type + '.provider_component_id AS provider_component_id, '
             'id($$) AS neighbor_id'
         )
-        logger.info(f"One-hop reverse query: {reverse_query}")
+        logger.debug(f"One-hop reverse query: {reverse_query}")
         _process_rows(session.execute(reverse_query), "reverse")
 
         return results
@@ -585,7 +585,7 @@ async def fetch_one_hop_neighbors_to_finish(
             + edge_type + '.provider_component_id AS provider_component_id, '
             'id($$) AS neighbor_id'
         )
-        logger.info(f"Finish-anchored forward query: {forward_query}")
+        logger.debug(f"Finish-anchored forward query: {forward_query}")
         _process_rows(session.execute(forward_query), "forward")
 
         # Reverse edges: finish=consumer/destination, neighbor=provider/source
@@ -600,7 +600,7 @@ async def fetch_one_hop_neighbors_to_finish(
             + edge_type + '.provider_component_id AS provider_component_id, '
             'id($$) AS neighbor_id'
         )
-        logger.info(f"Finish-anchored reverse query: {reverse_query}")
+        logger.debug(f"Finish-anchored reverse query: {reverse_query}")
         _process_rows(session.execute(reverse_query), "reverse")
 
         return results
