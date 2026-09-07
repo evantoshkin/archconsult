@@ -4,7 +4,7 @@ from typing import Optional
 from nebula3.gclient.net import ConnectionPool
 
 from app.core.config import settings
-from app.db.nebula_pool import get_nebula_pool
+from app.db.nebula_pool import get_nebula_pool, run_in_executor
 from app.schemas.paths import TraverseFilter
 
 logger = logging.getLogger(__name__)
@@ -16,19 +16,41 @@ async def execute_nebula_experiment_search(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    from datetime import datetime, timedelta
-    
-    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
-    logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
-    
-    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-    if source_type == "interface_registry":
-        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
-    logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
-    pool = get_nebula_pool()
-    
-    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
-    
+    def _run() -> dict[str, dict[str, dict]]:
+        from datetime import datetime, timedelta
+
+        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
+
+        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+        if source_type == "interface_registry":
+            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+        logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
+        pool = get_nebula_pool()
+
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+
+        try:
+            return _execute_experiment_search_sync(
+                session, start_filter, finish_filter,
+                cutoff_date, edge_type,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph query error: {e}")
+            return {}
+        finally:
+            session.release()
+
+    return await run_in_executor(_run)
+
+
+def _execute_experiment_search_sync(
+    session,
+    start_filter: TraverseFilter,
+    finish_filter: TraverseFilter,
+    cutoff_date: str,
+    edge_type: str,
+) -> dict[str, dict[str, dict]]:
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -312,12 +334,10 @@ async def execute_nebula_experiment_search(
         
         logger.info(f"NebulaGraph experiment search returned {len(results)} matching document groups with paths")
         return results
-        
+
     except Exception as e:
         logger.error(f"NebulaGraph query error: {e}")
         return {}
-    finally:
-        session.release()
 
 
 async def fetch_one_hop_neighbors(
@@ -325,17 +345,37 @@ async def fetch_one_hop_neighbors(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    from datetime import datetime, timedelta
+    def _run() -> dict[str, dict[str, dict]]:
+        from datetime import datetime, timedelta
 
-    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-    if source_type == "interface_registry":
-        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+        if source_type == "interface_registry":
+            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
 
-    pool = get_nebula_pool()
-    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        pool = get_nebula_pool()
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
 
+        try:
+            return _execute_one_hop_neighbors_sync(
+                session, start_filter, cutoff_date, edge_type,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph one-hop query error: {e}")
+            return {}
+        finally:
+            session.release()
+
+    return await run_in_executor(_run)
+
+
+def _execute_one_hop_neighbors_sync(
+    session,
+    start_filter: TraverseFilter,
+    cutoff_date: str,
+    edge_type: str,
+) -> dict[str, dict[str, dict]]:
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -461,8 +501,6 @@ async def fetch_one_hop_neighbors(
     except Exception as e:
         logger.error(f"NebulaGraph one-hop query error: {e}")
         return {}
-    finally:
-        session.release()
 
 
 async def fetch_one_hop_neighbors_to_finish(
@@ -470,17 +508,37 @@ async def fetch_one_hop_neighbors_to_finish(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    from datetime import datetime, timedelta
+    def _run() -> dict[str, dict[str, dict]]:
+        from datetime import datetime, timedelta
 
-    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-    if source_type == "interface_registry":
-        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+        if source_type == "interface_registry":
+            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
 
-    pool = get_nebula_pool()
-    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        pool = get_nebula_pool()
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
 
+        try:
+            return _execute_one_hop_neighbors_to_finish_sync(
+                session, finish_filter, cutoff_date, edge_type,
+            )
+        except Exception as e:
+            logger.error(f"NebulaGraph finish-anchored one-hop query error: {e}")
+            return {}
+        finally:
+            session.release()
+
+    return await run_in_executor(_run)
+
+
+def _execute_one_hop_neighbors_to_finish_sync(
+    session,
+    finish_filter: TraverseFilter,
+    cutoff_date: str,
+    edge_type: str,
+) -> dict[str, dict[str, dict]]:
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -608,8 +666,6 @@ async def fetch_one_hop_neighbors_to_finish(
     except Exception as e:
         logger.error(f"NebulaGraph finish-anchored one-hop query error: {e}")
         return {}
-    finally:
-        session.release()
 
 
 async def fetch_nebula_node_names(
@@ -617,10 +673,25 @@ async def fetch_nebula_node_names(
 ) -> dict[tuple, dict]:
     if not nodes:
         return {}
-    
-    pool = get_nebula_pool()
-    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
-    
+
+    def _run() -> dict[tuple, dict]:
+        pool = get_nebula_pool()
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        try:
+            return _fetch_nebula_node_names_sync(session, nodes)
+        except Exception as e:
+            logger.error(f"NebulaGraph node names fetch error: {e}")
+            return {}
+        finally:
+            session.release()
+
+    return await run_in_executor(_run)
+
+
+def _fetch_nebula_node_names_sync(
+    session,
+    nodes: list[tuple[str, str, str]],
+) -> dict[tuple, dict]:
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -700,12 +771,10 @@ async def fetch_nebula_node_names(
         
         logger.info(f"Fetched names for {len(names)} nodes from NebulaGraph")
         return names
-        
+
     except Exception as e:
         logger.error(f"NebulaGraph node names fetch error: {e}")
         return {}
-    finally:
-        session.release()
 
 
 async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
@@ -713,54 +782,66 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
     Fetch child tree from NebulaGraph using hierarchy edges.
     Returns a tree structure with node and children.
     """
-    pool = get_nebula_pool()
-    session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
-    
+    def _run() -> dict:
+        pool = get_nebula_pool()
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        try:
+            return _fetch_child_tree_from_nebula_sync(session, rsm_id)
+        except Exception as e:
+            logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
+            return None
+        finally:
+            session.release()
+
+    return await run_in_executor(_run)
+
+
+def _fetch_child_tree_from_nebula_sync(session, rsm_id: str) -> dict:
     def parse_vertex(vertex_str: str) -> dict:
         """Parse vertex string and extract label, name and description."""
         import re
-        
+
         label = ""
         name = None
         description = None
-        
+
         # Extract label from vertex string (e.g., :SYSTEM, :MODULE, :COMPONENT)
         label_match = re.search(r':([A-Za-z]+)[{]', vertex_str)
         if label_match:
             label = label_match.group(1)
-        
+
         # Extract name property
         name_match = re.search(r'name:\s*"([^"]*)"', vertex_str)
         if name_match:
             name = name_match.group(1)
-        
+
         # Extract description property
         description_match = re.search(r'(?:description|rsm_description):\s*"([^"]*)"', vertex_str)
         if description_match:
             description = description_match.group(1)
-        
+
         return {
             "label": label,
             "rsm_name": name,
             "description": description,
         }
-    
+
     def fetch_children_recursive(node_id: str, visited: set) -> list:
         """Recursively fetch children for a node."""
         if node_id in visited:
             return []
         visited.add(node_id)
-        
+
         children_query = f'GO FROM "{node_id}" OVER HIERARCHY REVERSELY YIELD id($$) AS child_id, $$ AS child_vertex'
         children_result = session.execute(children_query)
-        
+
         children = []
         if children_result.is_succeeded():
             for row_idx in range(children_result.row_size()):
                 row = children_result.row_values(row_idx)
                 child_id = str(row[0]).strip('"') if row[0] else None
                 child_vertex = str(row[1]) if row[1] else ""
-                
+
                 if child_id and child_id not in visited:
                     parsed = parse_vertex(child_vertex)
                     children.append({
@@ -771,9 +852,9 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
                         },
                         "children": fetch_children_recursive(child_id, visited)
                     })
-        
+
         return children
-    
+
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
@@ -808,9 +889,7 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
             },
             "children": children
         }
-        
+
     except Exception as e:
         logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
         return None
-    finally:
-        session.release()

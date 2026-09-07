@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     SEARCH_DEPTH_DAYS: int = 30
     MAX_PATH_DEPTH: int = 7
+    DB_POOL_MAX_SIZE: int = 10
+    DB_POOL_MIN_SIZE: int = 2
 
     LOG_LEVEL: str = "INFO"
     DB_STATEMENT_TIMEOUT_MS: int = 30000
