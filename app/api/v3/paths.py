@@ -1,8 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException
 
-from app.core.config import settings
-from app.db.nebula_pool import get_nebula_pool, run_in_executor
 from app.db.nebula_queries import (
     execute_nebula_experiment_search,
     fetch_nebula_node_names,
@@ -179,108 +177,101 @@ async def path_search(request: PathRequest) -> PathResponse:
 
     path_groups: dict[tuple, dict] = {}
 
-    pool = get_nebula_pool()
-
+    # Pure in-memory assembly; no DB interaction needed (all node data is
+    # already available in node_names / path_data_map / path_eotar_map).
     def _build_path_groups() -> dict[tuple, dict]:
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        for path_key, eotar_ids in path_eotar_map.items():
+            data = path_data_map[path_key]
+            path_nodes = data["path"]
+            edge_data_list = data.get("edge_data", [])
+            edge_directions = data.get("edge_directions", [])
+            num_nodes = len(path_nodes)
+            document_id = sorted(eotar_ids)[0] if eotar_ids else ""
 
-        try:
-            session.execute(f'USE {settings.NEBULA_SPACE};')
+            segments: list[PathSegment] = []
+            logger.debug(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
+            for i in range(num_nodes - 1):
+                is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
 
-            for path_key, eotar_ids in path_eotar_map.items():
-                data = path_data_map[path_key]
-                path_nodes = data["path"]
-                edge_data_list = data.get("edge_data", [])
-                edge_directions = data.get("edge_directions", [])
-                num_nodes = len(path_nodes)
-                document_id = sorted(eotar_ids)[0] if eotar_ids else ""
+                if is_reverse:
+                    # Edge opposite to path direction: nodes[i] <- nodes[i+1].
+                    # source (consumer/requester) = nodes[i+1], destination (provider/responder) = nodes[i].
+                    eff_source_node = path_nodes[i + 1]
+                    eff_dest_node = path_nodes[i]
+                else:
+                    eff_source_node = path_nodes[i]
+                    eff_dest_node = path_nodes[i + 1]
 
-                segments: list[PathSegment] = []
-                logger.debug(f"Building segments for path_key={path_key}, nodes={path_nodes}, edge_directions={edge_directions}")
-                for i in range(num_nodes - 1):
-                    is_reverse = i < len(edge_directions) and edge_directions[i] == "reverse"
+                combos = to_combos(edge_data_list[i]) if i < len(edge_data_list) else []
+                if not combos:
+                    combos = [{
+                        "consumer_module_id": "",
+                        "provider_module_id": "",
+                        "consumer_component_id": "",
+                        "provider_component_id": "",
+                    }]
 
-                    if is_reverse:
-                        # Edge opposite to path direction: nodes[i] <- nodes[i+1].
-                        # source (consumer/requester) = nodes[i+1], destination (provider/responder) = nodes[i].
-                        eff_source_node = path_nodes[i + 1]
-                        eff_dest_node = path_nodes[i]
-                    else:
-                        eff_source_node = path_nodes[i]
-                        eff_dest_node = path_nodes[i + 1]
+                for combo in combos:
+                    source_module_id = combo.get("consumer_module_id", "")
+                    source_component_id = combo.get("consumer_component_id", "")
+                    dest_module_id = combo.get("provider_module_id", "")
+                    dest_component_id = combo.get("provider_component_id", "")
 
-                    combos = to_combos(edge_data_list[i]) if i < len(edge_data_list) else []
-                    if not combos:
-                        combos = [{
-                            "consumer_module_id": "",
-                            "provider_module_id": "",
-                            "consumer_component_id": "",
-                            "provider_component_id": "",
-                        }]
+                    if i == 0:
+                        if start.module_rsm_id:
+                            source_module_id = start.module_rsm_id
+                        if start.component_rsm_id:
+                            source_component_id = start.component_rsm_id
 
-                    for combo in combos:
-                        source_module_id = combo.get("consumer_module_id", "")
-                        source_component_id = combo.get("consumer_component_id", "")
-                        dest_module_id = combo.get("provider_module_id", "")
-                        dest_component_id = combo.get("provider_component_id", "")
+                    if i == num_nodes - 2:
+                        if finish.module_rsm_id:
+                            dest_module_id = finish.module_rsm_id
+                        if finish.component_rsm_id:
+                            dest_component_id = finish.component_rsm_id
 
-                        if i == 0:
-                            if start.module_rsm_id:
-                                source_module_id = start.module_rsm_id
-                            if start.component_rsm_id:
-                                source_component_id = start.component_rsm_id
+                    logger.debug(
+                        f"  Segment {i} ({'REVERSE' if is_reverse else 'FORWARD'}): "
+                        f"source={eff_source_node}(mod={source_module_id},comp={source_component_id}) "
+                        f"-> dest={eff_dest_node}(mod={dest_module_id},comp={dest_component_id})"
+                    )
 
-                        if i == num_nodes - 2:
-                            if finish.module_rsm_id:
-                                dest_module_id = finish.module_rsm_id
-                            if finish.component_rsm_id:
-                                dest_component_id = finish.component_rsm_id
+                    source_names = node_names.get((eff_source_node, source_module_id, source_component_id))
+                    source_system_names = node_names.get((eff_source_node, "", ""))
+                    dest_names = node_names.get((eff_dest_node, dest_module_id, dest_component_id))
+                    dest_system_names = node_names.get((eff_dest_node, "", ""))
 
-                        logger.debug(
-                            f"  Segment {i} ({'REVERSE' if is_reverse else 'FORWARD'}): "
-                            f"source={eff_source_node}(mod={source_module_id},comp={source_component_id}) "
-                            f"-> dest={eff_dest_node}(mod={dest_module_id},comp={dest_component_id})"
-                        )
+                    segments.append(PathSegment(
+                        description="",
+                        source=PathSegmentSource(
+                            system_rsm_id=eff_source_node,
+                            system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,
+                            module_rsm_id=source_module_id,
+                            module_rsm_name=source_names.get("module_rsm_name") if source_names else None,
+                            component_rsm_id=source_component_id,
+                            component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
+                        ),
+                        destination=PathSegmentDestination(
+                            system_rsm_id=eff_dest_node,
+                            system_rsm_name=dest_system_names.get("system_rsm_name") if dest_system_names else None,
+                            module_rsm_id=dest_module_id,
+                            module_rsm_name=dest_names.get("module_rsm_name") if dest_names else None,
+                            component_rsm_id=dest_component_id,
+                            component_rsm_name=dest_names.get("component_rsm_name") if dest_names else None,
+                        ),
+                    ))
 
-                        source_names = node_names.get((eff_source_node, source_module_id, source_component_id))
-                        source_system_names = node_names.get((eff_source_node, "", ""))
-                        dest_names = node_names.get((eff_dest_node, dest_module_id, dest_component_id))
-                        dest_system_names = node_names.get((eff_dest_node, "", ""))
+            sorted_eotar_ids = sorted(eotar_ids)
+            first_eotar_id = sorted_eotar_ids[0] if sorted_eotar_ids else ""
 
-                        segments.append(PathSegment(
-                            description="",
-                            source=PathSegmentSource(
-                                system_rsm_id=eff_source_node,
-                                system_rsm_name=source_system_names.get("system_rsm_name") if source_system_names else None,
-                                module_rsm_id=source_module_id,
-                                module_rsm_name=source_names.get("module_rsm_name") if source_names else None,
-                                component_rsm_id=source_component_id,
-                                component_rsm_name=source_names.get("component_rsm_name") if source_names else None,
-                            ),
-                            destination=PathSegmentDestination(
-                                system_rsm_id=eff_dest_node,
-                                system_rsm_name=dest_system_names.get("system_rsm_name") if dest_system_names else None,
-                                module_rsm_id=dest_module_id,
-                                module_rsm_name=dest_names.get("module_rsm_name") if dest_names else None,
-                                component_rsm_id=dest_component_id,
-                                component_rsm_name=dest_names.get("component_rsm_name") if dest_names else None,
-                            ),
-                        ))
+            path_groups[path_key] = {
+                "segments": segments,
+                "frequency": len(eotar_ids),
+                "document_rsm_id": first_eotar_id,
+                "document_rsm_date_time": data.get("document_rsm_date_time"),
+            }
+        return path_groups
 
-                sorted_eotar_ids = sorted(eotar_ids)
-                first_eotar_id = sorted_eotar_ids[0] if sorted_eotar_ids else ""
-
-                path_groups[path_key] = {
-                    "segments": segments,
-                    "frequency": len(eotar_ids),
-                    "document_rsm_id": first_eotar_id,
-                    "document_rsm_date_time": data.get("document_rsm_date_time"),
-                }
-            return path_groups
-        finally:
-            session.release()
-
-    path_groups = await run_in_executor(_build_path_groups)
+    path_groups = _build_path_groups()
 
     if request.sort_by == TraverseSortBy.MOST_FREQUENT:
         sorted_paths = sorted(

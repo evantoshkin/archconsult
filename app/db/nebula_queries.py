@@ -692,84 +692,78 @@ def _fetch_nebula_node_names_sync(
     session,
     nodes: list[tuple[str, str, str]],
 ) -> dict[tuple, dict]:
+    import re
+
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
         if not result.is_succeeded():
             logger.error(f"Failed to use space: {result.error_msg()}")
             return {}
-        
+
         names: dict[tuple, dict] = {}
-        
-        for sys_id, mod_id, comp_id in set(nodes):
-            if sys_id:
-                query = f'FETCH PROP ON SYSTEM "{sys_id}" YIELD vertex as v'
-                result = session.execute(query)
-                if result.is_succeeded() and result.row_size() > 0:
-                    row = result.row_values(0)
-                    vertex_str = str(row[0]) if row[0] else ""
-                    
-                    name = None
-                    if "name:" in vertex_str or "rsm_name:" in vertex_str:
-                        import re
-                        match = re.search(r'(?:name|rsm_name):\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    
-                    key = (sys_id, "", "")
-                    if key not in names:
-                        names[key] = {}
-                    if name and name != "None":
-                        names[key]["system_rsm_name"] = name
-            
-            if mod_id:
-                query = f'FETCH PROP ON MODULE "{mod_id}" YIELD vertex as v'
-                result = session.execute(query)
-                if result.is_succeeded() and result.row_size() > 0:
-                    row = result.row_values(0)
-                    vertex_str = str(row[0]) if row[0] else ""
-                    
-                    name = None
-                    import re
-                    if "module_rsm_name:" in vertex_str:
-                        match = re.search(r'module_rsm_name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    elif "name:" in vertex_str:
-                        match = re.search(r'name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    
-                    key = (sys_id, mod_id, comp_id)
-                    if key not in names:
-                        names[key] = {}
-                    if name and name != "None":
-                        names[key]["module_rsm_name"] = name
-            
-            if comp_id:
-                query = f'FETCH PROP ON COMPONENT "{comp_id}" YIELD vertex as v'
-                result = session.execute(query)
-                if result.is_succeeded() and result.row_size() > 0:
-                    row = result.row_values(0)
-                    vertex_str = str(row[0]) if row[0] else ""
-                    
-                    name = None
-                    import re
-                    if "component_rsm_name:" in vertex_str:
-                        match = re.search(r'component_rsm_name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    elif "name:" in vertex_str:
-                        match = re.search(r'name:\s*"([^"]*)"', vertex_str)
-                        if match:
-                            name = match.group(1)
-                    
-                    key = (sys_id, mod_id, comp_id)
-                    if key not in names:
-                        names[key] = {}
-                    if name and name != "None":
-                        names[key]["component_rsm_name"] = name
-        
-        logger.info(f"Fetched names for {len(names)} nodes from NebulaGraph")
+        node_set = set(nodes)
+
+        def _get_or_create(key: tuple) -> dict:
+            if key not in names:
+                names[key] = {}
+            return names[key]
+
+        # Batched lookups: one query per tag instead of one per id (N+1).
+        def _fetch_names(tag: str, ids: list[str], prop_key: str) -> list[tuple[str, str]]:
+            """Fetch (vid, name) pairs for the given tag in a single query."""
+            ids_str = ",".join(f'"{_id}"' for _id in ids)
+            query = f'FETCH PROP ON {tag} {ids_str} YIELD vertex as v'
+            logger.debug(f"Batched {tag} name query: {query}")
+            res = session.execute(query)
+            if not res.is_succeeded():
+                logger.error(f"{tag} name batch query failed: {res.error_msg()}")
+                return []
+            pairs: list[tuple[str, str]] = []
+            for row_index in range(res.row_size()):
+                row = res.row_values(row_index)
+                if not row or len(row) < 1:
+                    continue
+                vertex_str = str(row[0]) if row[0] else ""
+                # Vertex string looks like: ("6321..." :SYSTEM{system_rsm_id:"...",
+                # name:"..."}). Derive the vid from the leading parenthesized token,
+                # falling back to the tag's *_rsm_id property inside the vertex.
+                id_match = re.search(r'\(\s*"([^"]+)"', vertex_str)
+                vid = id_match.group(1) if id_match else None
+                if vid is None:
+                    id_prop = {
+                        "SYSTEM": "system_rsm_id",
+                        "MODULE": "module_rsm_id",
+                        "COMPONENT": "component_rsm_id",
+                    }[tag]
+                    id_match = re.search(rf'{id_prop}:\s*"([^"]*)"', vertex_str)
+                    vid = id_match.group(1) if id_match else None
+                # Prefer the tag-specific prop, fall back to generic name.
+                prop_match = re.search(
+                    rf'({prop_key}|name):\s*"([^"]*)"', vertex_str
+                )
+                name = prop_match.group(2) if prop_match else None
+                if vid and name and name != "None":
+                    pairs.append((vid, name))
+            return pairs
+
+        _sys_ids = sorted({s for s, _, _ in node_set if s})
+        for vid, name in _fetch_names("SYSTEM", _sys_ids, "system_rsm_name"):
+            _get_or_create((vid, "", ""))["system_rsm_name"] = name
+
+        _mod_ids = sorted({m for _, m, _ in node_set if m})
+        for vid, name in _fetch_names("MODULE", _mod_ids, "module_rsm_name"):
+            # A module id may appear under several (sys, mod, comp) combos.
+            for (sys_id, mod_id, comp_id) in node_set:
+                if mod_id == vid:
+                    _get_or_create((sys_id, vid, comp_id))["module_rsm_name"] = name
+
+        _comp_ids = sorted({c for _, _, c in node_set if c})
+        for vid, name in _fetch_names("COMPONENT", _comp_ids, "component_rsm_name"):
+            for (sys_id, mod_id, comp_id) in node_set:
+                if comp_id == vid:
+                    _get_or_create((sys_id, mod_id, vid))["component_rsm_name"] = name
+
+        logger.info(f"Fetched names for {len(names)} nodes from NebulaGraph ({len(node_set)} requested)")
         return names
 
     except Exception as e:
