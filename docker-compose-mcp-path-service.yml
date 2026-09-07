@@ -8,7 +8,7 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - NEBULA_HOST=${NEBULA_HOST:-host.docker.internal}
       - NEBULA_PORT=${NEBULA_PORT:-9670}
       - NEBULA_USER=${NEBULA_USER:-root}
