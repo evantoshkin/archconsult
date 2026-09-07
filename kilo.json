@@ -1,0 +1,17 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "nebula-graph": {
+      "type": "local",
+      "command": ["npx", "-y", "@nebula-ai/mcp-server"],
+      "environment": {
+        "NEBULA_HOST": "localhost",
+        "NEBULA_PORT": "9670",
+        "NEBULA_USER": "root",
+        "NEBULA_PASSWORD": "nebula"
+      },
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}

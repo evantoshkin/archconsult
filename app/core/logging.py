@@ -37,7 +37,7 @@ def setup_logging() -> None:
     logging.getLogger("app.access").setLevel(settings.LOG_LEVEL)
 
 
-EXCLUDED_PATHS = {"/openapi.json", "/docs", "/redoc"}
+EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 
 
 class RequestIdMiddleware:

@@ -1,0 +1,201 @@
+services:
+  mcp-path-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-path-service
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - NEBULA_HOST=${NEBULA_HOST:-host.docker.internal}
+      - NEBULA_PORT=${NEBULA_PORT:-9670}
+      - NEBULA_USER=${NEBULA_USER:-root}
+      - NEBULA_PASSWORD=${NEBULA_PASSWORD:-nebula}
+      - SEARCH_DEPTH_DAYS=${SEARCH_DEPTH_DAYS:-90}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - mcp-network
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    env_file:
+      - environment/n8n.env
+    depends_on:
+      - postgres
+    restart: "always"
+    networks:
+      - mcp-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  n8n-task-runners:
+    build:
+      context: .
+      dockerfile: DockerfileN8NTaskRunnerWithNebula
+      args:
+        - N8N_TASK_RUNNERS_MAX_TASK_OPTIONS=1
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=123
+      - N8N_RUNNERS_TASK_REQUEST_TIMEOUT=3600
+      - N8N_RUNNERS_LAUNCHER_LOG_LEVEL=debug
+      - N8N_RUNNERS_TASK_TIMEOUT=3600
+    depends_on:
+      - n8n
+    networks:
+      - mcp-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgre-pgvector-age:latest # with vector extension
+    ports:
+      - "5432:5432"
+    env_file:
+      - environment/postgres.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - ./init-scripts/pg:/docker-entrypoint-initdb.d
+    restart: "always"
+    networks:
+      - mcp-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  metad0:
+    image: docker.io/vesoft/nebula-metad:v3.8.0
+    environment:
+      USER: root
+    command:
+      - --meta_server_addrs=metad0:9559
+      - --local_ip=metad0
+      - --ws_ip=metad0
+      - --port=9559
+      - --ws_http_port=19559
+      - --data_path=/data/meta
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://metad0:19559/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9559:9559
+      - 19559:19559
+      - 19560
+    volumes:
+      - ./data/meta0:/data/meta
+      - ./logs/meta0:/logs
+    networks:
+      - mcp-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  storaged0:
+    image: docker.io/vesoft/nebula-storaged:v3.8.0
+    environment:
+      USER: root
+      TZ:   "${TZ}"
+    command:
+      - --meta_server_addrs=metad0:9559
+      - --local_ip=storaged0
+      - --ws_ip=storaged0
+      - --port=9779
+      - --ws_http_port=19779
+      - --data_path=/data/storage
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - metad0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://storaged0:19779/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9779:9779
+      - 19779:19779
+      - 19780
+    volumes:
+      - ./data/storage0:/data/storage
+      - ./logs/storage0:/logs
+    networks:
+      - mcp-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  graphd:
+    image: docker.io/vesoft/nebula-graphd:v3.8.0
+    environment:
+      USER: root
+      TZ:   "${TZ}"
+    command:
+      - --meta_server_addrs=metad0:9559
+      - --port=9669
+      - --local_ip=graphd
+      - --ws_ip=graphd
+      - --ws_http_port=19669
+      - --log_dir=/logs
+      - --v=0
+      - --minloglevel=0
+    depends_on:
+      - storaged0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://graphd:19669/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    ports:
+      - 9670:9669
+      - 19669:19669
+      - 19670
+    volumes:
+      - ./logs/graph:/logs
+    networks:
+      - mcp-network
+    restart: on-failure
+    cap_add:
+      - SYS_PTRACE
+
+  nebula-studio:
+    image: docker.io/vesoft/nebula-graph-studio:latest
+    ports:
+      - 7001:7001
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge

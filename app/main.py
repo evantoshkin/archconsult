@@ -43,6 +43,11 @@ app.include_router(paths_v1.router)
 app.include_router(paths_v3.router)
 
 
+@app.get("/health", tags=["health"])
+async def health():
+    return JSONResponse(status_code=200, content={"status": "ok"})
+
+
 @app.exception_handler(500)
 async def internal_error_handler(request: Request, exc: Exception):
     return JSONResponse(

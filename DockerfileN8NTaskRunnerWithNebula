@@ -1,0 +1,16 @@
+FROM n8nio/runners:latest
+USER root
+
+# Очищаем старые зависимости и устанавливаем новые
+RUN cd /opt/runners/task-runner-javascript && \
+    rm -rf node_modules package-lock.json && \
+    pnpm add moment uuid
+
+# Устанавливаем Python библиотеки
+RUN cd /opt/runners/task-runner-python && \
+    uv pip install nebula3-python xxhash
+
+# Копируем конфигурацию
+COPY n8n-task-runners.json /etc/n8n-task-runners.json
+
+USER runner
