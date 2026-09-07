@@ -708,16 +708,18 @@ def _fetch_nebula_node_names_sync(
                 names[key] = {}
             return names[key]
 
-        # Batched lookups: one query per tag instead of one per id (N+1).
-        def _fetch_names(tag: str, ids: list[str], prop_key: str) -> list[tuple[str, str]]:
-            """Fetch (vid, name) pairs for the given tag in a single query."""
+        # Batched lookups: one query per SYSTEM tag to avoid N+1 for the
+        # dominant id type. MODULE/COMPONENT use a per-id fallback loop because
+        # multi-id FETCH PROP is rejected by this Nebula build for those edges.
+        def _fetch_names_batch(tag: str, ids: list[str], prop_key: str) -> list[tuple[str, str]]:
+            """Fetch (vid, name) pairs for the given tag via one batched query."""
             ids_str = ",".join(f'"{_id}"' for _id in ids)
             query = f'FETCH PROP ON {tag} {ids_str} YIELD vertex as v'
             logger.debug(f"Batched {tag} name query: {query}")
             res = session.execute(query)
             if not res.is_succeeded():
                 logger.error(f"{tag} name batch query failed: {res.error_msg()}")
-                return []
+                return None
             pairs: list[tuple[str, str]] = []
             for row_index in range(res.row_size()):
                 row = res.row_values(row_index)
@@ -746,22 +748,45 @@ def _fetch_nebula_node_names_sync(
                     pairs.append((vid, name))
             return pairs
 
+        def _fetch_names_single(tag: str, vid: str, prop_key: str) -> str | None:
+            """Fetch the name of a single vertex by id."""
+            query = f'FETCH PROP ON {tag} "{vid}" YIELD vertex as v'
+            res = session.execute(query)
+            if not res.is_succeeded() or res.row_size() == 0:
+                return None
+            row = res.row_values(0)
+            vertex_str = str(row[0]) if row and row[0] else ""
+            prop_match = re.search(
+                rf'({prop_key}|name):\s*"([^"]*)"', vertex_str
+            )
+            if not prop_match:
+                return None
+            name = prop_match.group(2)
+            return name if name and name != "None" else None
+
+        # SYSTEM: batched (works reliably); fall back per-id if rejected.
         _sys_ids = sorted({s for s, _, _ in node_set if s})
-        for vid, name in _fetch_names("SYSTEM", _sys_ids, "system_rsm_name"):
-            _get_or_create((vid, "", ""))["system_rsm_name"] = name
+        if _sys_ids:
+            _sys_names = _fetch_names_batch("SYSTEM", _sys_ids, "system_rsm_name")
+            if _sys_names is None:
+                _sys_names = []
+                for _id in _sys_ids:
+                    _n = _fetch_names_single("SYSTEM", _id, "system_rsm_name")
+                    if _n:
+                        _sys_names.append((_id, _n))
+            for vid, name in _sys_names:
+                _get_or_create((vid, "", ""))["system_rsm_name"] = name
 
-        _mod_ids = sorted({m for _, m, _ in node_set if m})
-        for vid, name in _fetch_names("MODULE", _mod_ids, "module_rsm_name"):
-            # A module id may appear under several (sys, mod, comp) combos.
-            for (sys_id, mod_id, comp_id) in node_set:
-                if mod_id == vid:
-                    _get_or_create((sys_id, vid, comp_id))["module_rsm_name"] = name
-
-        _comp_ids = sorted({c for _, _, c in node_set if c})
-        for vid, name in _fetch_names("COMPONENT", _comp_ids, "component_rsm_name"):
-            for (sys_id, mod_id, comp_id) in node_set:
-                if comp_id == vid:
-                    _get_or_create((sys_id, mod_id, vid))["component_rsm_name"] = name
+        # MODULE / COMPONENT: per-id loop (multi-id batch is unreliable here).
+        for (sys_id, mod_id, comp_id) in node_set:
+            if mod_id:
+                _n = _fetch_names_single("MODULE", mod_id, "module_rsm_name")
+                if _n:
+                    _get_or_create((sys_id, mod_id, comp_id))["module_rsm_name"] = _n
+            if comp_id:
+                _n = _fetch_names_single("COMPONENT", comp_id, "component_rsm_name")
+                if _n:
+                    _get_or_create((sys_id, mod_id, comp_id))["component_rsm_name"] = _n
 
         logger.info(f"Fetched names for {len(names)} nodes from NebulaGraph ({len(node_set)} requested)")
         return names
