@@ -6,7 +6,11 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1 import paths as paths_v1
 from app.api.v3 import paths as paths_v3
-from app.core.logging import RequestIdMiddleware, setup_logging
+from app.core.logging import (
+    RequestBodyLoggingMiddleware,
+    RequestIdMiddleware,
+    setup_logging,
+)
 from app.db.nebula_pool import create_nebula_pool, close_nebula_pool
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,7 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(RequestBodyLoggingMiddleware)
 
 app.include_router(paths_v1.router)
 app.include_router(paths_v3.router)

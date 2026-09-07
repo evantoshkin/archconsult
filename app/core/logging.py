@@ -39,6 +39,63 @@ def setup_logging() -> None:
 
 EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 
+REQ_BODY_LOG_LOGGER = logging.getLogger("app.request_body")
+
+# Paths whose POST request bodies are logged at INFO (for troubleshooting).
+REQUEST_BODY_LOG_PATHS = {"/api/v3/paths"}
+
+
+class RequestBodyLoggingMiddleware:
+    """Log the raw body of targeted POST requests at INFO, including on 422."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("method", "").upper() != "POST"
+            or scope.get("path", "") not in REQUEST_BODY_LOG_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        body = b""
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] == "http.request":
+                body += message.get("body", b"")
+                more = message.get("more_body", False)
+            elif message["type"] == "http.disconnect":
+                return
+
+        try:
+            decoded = body.decode("utf-8")
+        except UnicodeDecodeError:
+            decoded = repr(body)
+
+        REQ_BODY_LOG_LOGGER.log(
+            logging.INFO,
+            'request_id=%s method=POST path=%s body=%s',
+            request_id_var.get(""),
+            scope.get("path", ""),
+            decoded,
+        )
+
+        body = body
+        total = len(body)
+        sent = 0
+
+        async def buffered_receive():
+            nonlocal sent
+            if sent == 0:
+                sent = total
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, buffered_receive, send)
+
 
 class RequestIdMiddleware:
     def __init__(self, app) -> None:
