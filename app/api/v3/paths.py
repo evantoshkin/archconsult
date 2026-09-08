@@ -6,6 +6,7 @@ from app.db.nebula_queries import (
     fetch_nebula_node_names,
     fetch_one_hop_neighbors,
     fetch_one_hop_neighbors_to_finish,
+    resolve_system_ancestor,
 )
 from app.schemas.paths import (
     PathRequest,
@@ -40,6 +41,20 @@ router = APIRouter(prefix="/api/v3", tags=["paths"])
 async def path_search(request: PathRequest) -> PathResponse:
     start = request.start or TraverseFilter()
     finish = request.finish or TraverseFilter()
+
+    # Если system не задан, но задан module/component -> восстановить систему-предка.
+    for filt, name in ((start, "start"), (finish, "finish")):
+        if not filt.system_rsm_id and (filt.module_rsm_id or filt.component_rsm_id):
+            anchor = filt.module_rsm_id or filt.component_rsm_id
+            sys_id = await resolve_system_ancestor(anchor)
+            if sys_id:
+                filt.system_rsm_id = sys_id
+                logger.info(f"Resolved {name}.system_rsm_id={sys_id} from {anchor}")
+            else:
+                logger.warning(
+                    f"Could not resolve SYSTEM ancestor for {name} anchor {anchor}; "
+                    f"leaving {name}.system_rsm_id empty"
+                )
 
     if not finish.system_rsm_id and start.system_rsm_id:
         try:

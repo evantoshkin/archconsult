@@ -922,3 +922,81 @@ def _fetch_child_tree_from_nebula_sync(session, rsm_id: str) -> dict:
     except Exception as e:
         logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
         raise
+
+
+async def resolve_system_ancestor(rsm_id: str) -> Optional[str]:
+    """Подняться вверх по рёбрам HIERARCHY и вернуть SYSTEM-предка для module/component.
+
+    Ребро HIERARCHY хранится в направлении ребёнок -> родитель
+    (COMPONENT -> MODULE -> SYSTEM), поэтому идём ПО РЕБРУ ПРЯМО.
+    """
+    if not rsm_id:
+        return None
+
+    async def _run(session) -> Optional[str]:
+        return await run_in_executor(_resolve_system_ancestor_sync, session, rsm_id)
+
+    result = await _with_healthy_session(_run)
+    return result
+
+
+def _resolve_system_ancestor_sync(session, rsm_id: str) -> Optional[str]:
+    import re
+
+    if not rsm_id:
+        return None
+
+    label_re = re.compile(r':([A-Za-z]+)\s*[{]')
+
+    def _label(vid: str) -> Optional[str]:
+        q = f'FETCH PROP ON * "{vid}" YIELD vertex AS v'
+        r = session.execute(q)
+        if not r.is_succeeded() or r.row_size() == 0:
+            return None
+        row = r.row_values(0)
+        vs = str(row[0]) if row and row[0] else ""
+        m = label_re.search(vs)
+        return m.group(1) if m else None
+
+    try:
+        session.execute(f'USE {settings.NEBULA_SPACE};')
+        current = rsm_id.strip('"')
+        visited: set[str] = set()
+        max_hops = 64
+
+        for _ in range(max_hops):
+            if current in visited:
+                logger.warning(f"HIERARCHY cycle detected at {current}; aborting parent resolution")
+                return None
+            visited.add(current)
+
+            if _label(current) == "SYSTEM":
+                return current  # сам уже SYSTEM (или добрались до него)
+
+            parent_query = (
+                f'GO FROM "{current}" OVER HIERARCHY '
+                f'YIELD id($$) AS parent_id, $$ AS parent_vertex'
+            )
+            pres = session.execute(parent_query)
+            parent_id = None
+            if pres.is_succeeded() and pres.row_size() > 0:
+                prow = pres.row_values(0)
+                pid = str(prow[0]).strip('"') if prow and prow[0] else None
+                pvs = str(prow[1]) if len(prow) > 1 and prow[1] else ""
+                pm = label_re.search(pvs)
+                plabel = pm.group(1) if pm else None
+                if plabel == "SYSTEM":
+                    return pid
+                parent_id = pid
+
+            if parent_id is None or parent_id in visited:
+                return None  # нет родителя или цикл
+
+            current = parent_id
+
+        logger.warning(f"Parent resolution exceeded max_hops for {rsm_id}")
+        return None
+
+    except Exception as e:
+        logger.error(f"resolve_system_ancestor error for {rsm_id}: {e}")
+        raise
