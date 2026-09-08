@@ -4,10 +4,58 @@ from typing import Optional
 from nebula3.gclient.net import ConnectionPool
 
 from app.core.config import settings
-from app.db.nebula_pool import get_nebula_pool, run_in_executor
+from app.db.nebula_pool import (
+    get_nebula_pool,
+    get_pool_healthy,
+    mark_pool_unhealthy,
+    run_in_executor,
+)
 from app.schemas.paths import TraverseFilter
 
 logger = logging.getLogger(__name__)
+
+
+async def _with_healthy_session(coro_factory, *, retries: Optional[int] = None):
+    """Run a coroutine factory against a healthy pool, retrying after re-init.
+
+    `coro_factory(session)` is expected to run blocking work via run_in_executor.
+    The session is released by this helper. The underlying sync DB functions
+    propagate connection errors (they no longer swallow them into empty
+    results), allowing this helper to mark the pool unhealthy, re-initialise it
+    and retry against a freshly obtained session.
+    """
+    retries = settings.DB_RETRY_COUNT if retries is None else retries
+    attempt = 0
+    while True:
+        attempt += 1
+        if not get_pool_healthy() or get_nebula_pool() is None:
+            from app.db.nebula_pool import ensure_healthy_pool
+            ok = await ensure_healthy_pool()
+            if not ok:
+                return None
+
+        try:
+            pool = get_nebula_pool()
+        except RuntimeError:
+            from app.db.nebula_pool import ensure_healthy_pool
+            ok = await ensure_healthy_pool()
+            if not ok:
+                return None
+            pool = get_nebula_pool()
+
+        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+        try:
+            return await coro_factory(session)
+        except Exception as e:
+            logger.warning(f"DB operation failed (attempt {attempt}): {e}")
+            await mark_pool_unhealthy()
+            if attempt > retries:
+                logger.error(f"DB operation failed after {attempt - 1} retries")
+                return None
+            from app.db.nebula_pool import ensure_healthy_pool
+            await ensure_healthy_pool()
+        finally:
+            session.release()
 
 
 async def execute_nebula_experiment_search(
@@ -16,32 +64,24 @@ async def execute_nebula_experiment_search(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    def _run() -> dict[str, dict[str, dict]]:
-        from datetime import datetime, timedelta
+    from datetime import datetime, timedelta
 
-        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
-        logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+    logger.info(f"Searching paths with depth_days={depth_days}, cutoff_date={cutoff_date}")
 
-        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-        if source_type == "interface_registry":
-            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
-        logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
-        pool = get_nebula_pool()
+    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+    if source_type == "interface_registry":
+        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
 
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+    async def _run(session) -> dict[str, dict[str, dict]]:
+        return await run_in_executor(
+            _execute_experiment_search_sync, session, start_filter, finish_filter,
+            cutoff_date, edge_type,
+        )
 
-        try:
-            return _execute_experiment_search_sync(
-                session, start_filter, finish_filter,
-                cutoff_date, edge_type,
-            )
-        except Exception as e:
-            logger.error(f"NebulaGraph query error: {e}")
-            return {}
-        finally:
-            session.release()
-
-    return await run_in_executor(_run)
+    result = await _with_healthy_session(_run)
+    return result if result is not None else {}
 
 
 def _execute_experiment_search_sync(
@@ -337,7 +377,7 @@ def _execute_experiment_search_sync(
 
     except Exception as e:
         logger.error(f"NebulaGraph query error: {e}")
-        return {}
+        raise
 
 
 async def fetch_one_hop_neighbors(
@@ -345,29 +385,21 @@ async def fetch_one_hop_neighbors(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    def _run() -> dict[str, dict[str, dict]]:
-        from datetime import datetime, timedelta
+    from datetime import datetime, timedelta
 
-        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
 
-        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-        if source_type == "interface_registry":
-            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+    if source_type == "interface_registry":
+        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
 
-        pool = get_nebula_pool()
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+    async def _run(session) -> dict[str, dict[str, dict]]:
+        return await run_in_executor(
+            _execute_one_hop_neighbors_sync, session, start_filter, cutoff_date, edge_type,
+        )
 
-        try:
-            return _execute_one_hop_neighbors_sync(
-                session, start_filter, cutoff_date, edge_type,
-            )
-        except Exception as e:
-            logger.error(f"NebulaGraph one-hop query error: {e}")
-            return {}
-        finally:
-            session.release()
-
-    return await run_in_executor(_run)
+    result = await _with_healthy_session(_run)
+    return result if result is not None else {}
 
 
 def _execute_one_hop_neighbors_sync(
@@ -500,7 +532,7 @@ def _execute_one_hop_neighbors_sync(
 
     except Exception as e:
         logger.error(f"NebulaGraph one-hop query error: {e}")
-        return {}
+        raise
 
 
 async def fetch_one_hop_neighbors_to_finish(
@@ -508,29 +540,21 @@ async def fetch_one_hop_neighbors_to_finish(
     depth_days: int,
     source_type: str = "vision",
 ) -> dict[str, dict[str, dict]]:
-    def _run() -> dict[str, dict[str, dict]]:
-        from datetime import datetime, timedelta
+    from datetime import datetime, timedelta
 
-        cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff_date = (datetime.now() - timedelta(days=depth_days)).strftime("%Y-%m-%dT%H:%M:%S")
 
-        edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
-        if source_type == "interface_registry":
-            edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
+    if source_type == "interface_registry":
+        edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
 
-        pool = get_nebula_pool()
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
+    async def _run(session) -> dict[str, dict[str, dict]]:
+        return await run_in_executor(
+            _execute_one_hop_neighbors_to_finish_sync, session, finish_filter, cutoff_date, edge_type,
+        )
 
-        try:
-            return _execute_one_hop_neighbors_to_finish_sync(
-                session, finish_filter, cutoff_date, edge_type,
-            )
-        except Exception as e:
-            logger.error(f"NebulaGraph finish-anchored one-hop query error: {e}")
-            return {}
-        finally:
-            session.release()
-
-    return await run_in_executor(_run)
+    result = await _with_healthy_session(_run)
+    return result if result is not None else {}
 
 
 def _execute_one_hop_neighbors_to_finish_sync(
@@ -665,7 +689,7 @@ def _execute_one_hop_neighbors_to_finish_sync(
 
     except Exception as e:
         logger.error(f"NebulaGraph finish-anchored one-hop query error: {e}")
-        return {}
+        raise
 
 
 async def fetch_nebula_node_names(
@@ -674,18 +698,11 @@ async def fetch_nebula_node_names(
     if not nodes:
         return {}
 
-    def _run() -> dict[tuple, dict]:
-        pool = get_nebula_pool()
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
-        try:
-            return _fetch_nebula_node_names_sync(session, nodes)
-        except Exception as e:
-            logger.error(f"NebulaGraph node names fetch error: {e}")
-            return {}
-        finally:
-            session.release()
+    async def _run(session) -> dict[tuple, dict]:
+        return await run_in_executor(_fetch_nebula_node_names_sync, session, nodes)
 
-    return await run_in_executor(_run)
+    result = await _with_healthy_session(_run)
+    return result if result is not None else {}
 
 
 def _fetch_nebula_node_names_sync(
@@ -793,7 +810,7 @@ def _fetch_nebula_node_names_sync(
 
     except Exception as e:
         logger.error(f"NebulaGraph node names fetch error: {e}")
-        return {}
+        raise
 
 
 async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
@@ -801,18 +818,11 @@ async def fetch_child_tree_from_nebula(rsm_id: str) -> dict:
     Fetch child tree from NebulaGraph using hierarchy edges.
     Returns a tree structure with node and children.
     """
-    def _run() -> dict:
-        pool = get_nebula_pool()
-        session = pool.get_session(settings.NEBULA_USER, settings.NEBULA_PASSWORD)
-        try:
-            return _fetch_child_tree_from_nebula_sync(session, rsm_id)
-        except Exception as e:
-            logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
-            return None
-        finally:
-            session.release()
+    async def _run(session) -> dict:
+        return await run_in_executor(_fetch_child_tree_from_nebula_sync, session, rsm_id)
 
-    return await run_in_executor(_run)
+    result = await _with_healthy_session(_run)
+    return result
 
 
 def _fetch_child_tree_from_nebula_sync(session, rsm_id: str) -> dict:
@@ -911,4 +921,4 @@ def _fetch_child_tree_from_nebula_sync(session, rsm_id: str) -> dict:
 
     except Exception as e:
         logger.error(f"NebulaGraph query error in fetch_child_tree_from_nebula: {e}")
-        return None
+        raise
