@@ -231,133 +231,213 @@ def _execute_experiment_search_sync(
         logger.info(f"Found {len(matching_document_ids)} matching document_ids between start and finish systems")
         
         results: dict[str, dict[str, dict]] = {}
-        
+
+        def _parse_path(raw_path: str):
+            temp_nodes = []
+            temp_dirs = []
+            idx = 0
+            while idx < len(raw_path):
+                if raw_path[idx] == '(' and idx + 1 < len(raw_path) and raw_path[idx + 1] == '"':
+                    start = idx + 2
+                    end = raw_path.index('"', start)
+                    temp_nodes.append(raw_path[start:end])
+                    idx = end + 2
+                elif raw_path[idx:idx+1] == "<" and raw_path[idx:idx+2] == "<-":
+                    temp_dirs.append("reverse")
+                    idx += 2
+                elif raw_path[idx:idx+2] == "->":
+                    temp_dirs.append("forward")
+                    idx += 2
+                else:
+                    idx += 1
+            return temp_nodes, temp_dirs
+
+        def _fetch_document_edges(
+            clean_document_id: str,
+            node_list: list[str],
+            edge_pairs: list[tuple[str, str, bool]],
+        ) -> dict[tuple, list[dict]]:
+            """Fetch edge (consumer/provider module/component) combos for many
+            directed edges of one document in ONE forward + ONE reverse query.
+
+            Returns {(from_node, to_node, is_reverse): [combo, ...]}.
+            """
+            cache: dict[tuple, list[dict]] = {}
+
+            def _combo_from_row(row, offset: int):
+                if len(row) < offset + 4:
+                    return None
+                combo = {
+                    "consumer_module_id": str(row[offset]).strip('"') if row[offset] and str(row[offset]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                    "provider_module_id": str(row[offset + 1]).strip('"') if row[offset + 1] and str(row[offset + 1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                    "consumer_component_id": str(row[offset + 2]).strip('"') if row[offset + 2] and str(row[offset + 2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                    "provider_component_id": str(row[offset + 3]).strip('"') if row[offset + 3] and str(row[offset + 3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
+                }
+                return combo
+
+            def _dedup(combos: list[dict]) -> list[dict]:
+                seen: set[tuple] = set()
+                out = []
+                for c in combos:
+                    key = (c["consumer_module_id"], c["consumer_component_id"], c["provider_module_id"], c["provider_component_id"])
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(c)
+                return out
+
+            def _ensure(from_node, to_node, is_reverse):
+                key = (from_node, to_node, is_reverse)
+                if key not in cache:
+                    cache[key] = []
+                return key
+
+            # Collect unique directed (non-self-loop) edges for this document.
+            forward_srcs = set()
+            reverse_srcs = set()
+            for (from_node, to_node, _is_rev) in edge_pairs:
+                if from_node == to_node:
+                    continue
+                if (from_node, to_node, False) not in cache:
+                    forward_srcs.add((from_node, to_node))
+                if (from_node, to_node, True) not in cache:
+                    reverse_srcs.add((from_node, to_node))
+
+            # One batched forward query: GO FROM <all srcs> OVER edge, dst IN all dsts.
+            if forward_srcs:
+                srcs = ",".join(f'"{s}"' for s, _ in sorted(forward_srcs, key=lambda x: (x[0], x[1])))
+                dsts = ",".join(f'"{d}"' for _, d in sorted(forward_srcs, key=lambda x: (x[0], x[1])))
+                q_forward = (
+                    f'GO FROM {srcs} OVER {edge_type} '
+                    f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
+                    f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
+                    f'AND id($$) IN [{dsts}] '
+                    f'YIELD src(edge) AS s, dst(edge) AS d, '
+                    f'{edge_type}.consumer_module_id, '
+                    f'{edge_type}.provider_module_id, '
+                    f'{edge_type}.consumer_component_id, '
+                    f'{edge_type}.provider_component_id'
+                )
+                res = session.execute(q_forward)
+                if res.is_succeeded():
+                    for ridx in range(res.row_size()):
+                        row = res.row_values(ridx)
+                        if len(row) < 6:
+                            continue
+                        s = str(row[0]).strip('"') if row[0] else ""
+                        d = str(row[1]).strip('"') if row[1] else ""
+                        combo = _combo_from_row(row, 2)
+                        if s and d and combo:
+                            key = _ensure(s, d, False)
+                            cache[key].append(combo)
+
+            # One batched reverse query.
+            if reverse_srcs:
+                srcs = ",".join(f'"{s}"' for s, _ in sorted(reverse_srcs, key=lambda x: (x[0], x[1])))
+                dsts = ",".join(f'"{d}"' for _, d in sorted(reverse_srcs, key=lambda x: (x[0], x[1])))
+                q_reverse = (
+                    f'GO FROM {srcs} OVER {edge_type} REVERSELY '
+                    f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
+                    f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
+                    f'AND id($$) IN [{dsts}] '
+                    f'YIELD src(edge) AS s, dst(edge) AS d, '
+                    f'{edge_type}.consumer_module_id, '
+                    f'{edge_type}.provider_module_id, '
+                    f'{edge_type}.consumer_component_id, '
+                    f'{edge_type}.provider_component_id'
+                )
+                res = session.execute(q_reverse)
+                if res.is_succeeded():
+                    for ridx in range(res.row_size()):
+                        row = res.row_values(ridx)
+                        if len(row) < 6:
+                            continue
+                        s = str(row[0]).strip('"') if row[0] else ""
+                        d = str(row[1]).strip('"') if row[1] else ""
+                        combo = _combo_from_row(row, 2)
+                        if s and d and combo:
+                            key = _ensure(s, d, True)
+                            cache[key].append(combo)
+
+            # Normalise: empty -> single blank combo; dedupe.
+            for k in list(cache.keys()):
+                combos = cache[k]
+                if not combos:
+                    cache[k] = [{
+                        "consumer_module_id": "",
+                        "provider_module_id": "",
+                        "consumer_component_id": "",
+                        "provider_component_id": "",
+                    }]
+                else:
+                    cache[k] = _dedup(combos)
+
+            return cache
+
         for document_id in matching_document_ids:
             clean_document_id = document_id.strip('"')
-            
+
             paths_for_document: dict[str, dict] = {}
-            
+
             def process_path_result(path_result):
                 if not path_result.is_succeeded():
                     logger.error(f"Path query failed for document_id {document_id}: {path_result.error_msg()}")
                     return
-                
+
                 for row_index in range(path_result.row_size()):
                     row = path_result.row_values(row_index)
-                    
                     if len(row) < 1:
                         continue
-                    
                     path = row[0] if row[0] else None
-                    if path:
-                        raw_path = str(path)
-                        temp_nodes = []
-                        temp_dirs = []
-                        idx = 0
-                        while idx < len(raw_path):
-                            if raw_path[idx] == '(' and idx + 1 < len(raw_path) and raw_path[idx + 1] == '"':
-                                start = idx + 2
-                                end = raw_path.index('"', start)
-                                temp_nodes.append(raw_path[start:end])
-                                idx = end + 2
-                            elif raw_path[idx:idx+1] == "<" and raw_path[idx:idx+2] == "<-":
-                                temp_dirs.append("reverse")
-                                idx += 2
-                            elif raw_path[idx:idx+2] == "->":
-                                temp_dirs.append("forward")
-                                idx += 2
-                            else:
-                                idx += 1
-                        
-                        nodes = temp_nodes
-                        edge_directions = temp_dirs[:len(nodes)-1] if len(temp_dirs) >= len(nodes) - 1 else ["forward"] * (len(nodes) - 1)
-                        
-                        path_key = tuple(nodes)
-                        
-                        if path_key not in paths_for_document:
-                            edge_data_list = []
-                            edge_cache: dict[tuple, dict] = {}
-                            for i in range(len(nodes) - 1):
-                                from_node = nodes[i]
-                                to_node = nodes[i + 1]
-                                is_reverse = (edge_directions[i] == "reverse") if i < len(edge_directions) else False
+                    if not path:
+                        continue
+                    nodes, temp_dirs = _parse_path(str(path))
+                    edge_directions = temp_dirs[:len(nodes)-1] if len(temp_dirs) >= len(nodes) - 1 else ["forward"] * (len(nodes) - 1)
+                    path_key = tuple(nodes)
+                    if path_key not in paths_for_document:
+                        paths_for_document[path_key] = {
+                            "path": nodes,
+                            "distance": len(nodes),
+                            "edge_directions": edge_directions,
+                        }
 
-                                if from_node == to_node:
-                                    logger.info(f"Skipping self-loop edge query: {from_node} == {to_node}")
-                                    edge_cache_key = (from_node, to_node, is_reverse)
-                                    edge_cache[edge_cache_key] = [{
-                                        "consumer_module_id": "",
-                                        "provider_module_id": "",
-                                        "consumer_component_id": "",
-                                        "provider_component_id": "",
-                                    }]
-                                    edge_data_list.append(edge_cache[edge_cache_key])
-                                    continue
-
-                                edge_cache_key = (from_node, to_node, is_reverse)
-                                if edge_cache_key in edge_cache:
-                                    logger.info(f"Reusing cached edge data for {from_node} -> {to_node} ({'reverse' if is_reverse else 'forward'})")
-                                    edge_data_list.append(edge_cache[edge_cache_key])
-                                    continue
-
-                                if not is_reverse:
-                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" AND id($$) == "{to_node}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id'
-                                else:
-                                    edge_query = f'GO FROM "{from_node}" OVER {edge_type} REVERSELY WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" AND id($$) == "{to_node}" YIELD {edge_type}.consumer_module_id, {edge_type}.provider_module_id, {edge_type}.consumer_component_id, {edge_type}.provider_component_id'
-                                
-                                logger.debug(f"Executing edge query ({'forward' if not is_reverse else 'reverse'}): {edge_query}")
-                                edge_result = session.execute(edge_query)
-                                
-                                combos: list[dict] = []
-                                seen: set[tuple] = set()
-                                if edge_result.is_succeeded():
-                                    for edge_row_idx in range(edge_result.row_size()):
-                                        edge_row = edge_result.row_values(edge_row_idx)
-                                        if len(edge_row) < 4:
-                                            continue
-                                        combo = {
-                                            "consumer_module_id": str(edge_row[0]).strip('"') if edge_row[0] and str(edge_row[0]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "provider_module_id": str(edge_row[1]).strip('"') if edge_row[1] and str(edge_row[1]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "consumer_component_id": str(edge_row[2]).strip('"') if edge_row[2] and str(edge_row[2]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                            "provider_component_id": str(edge_row[3]).strip('"') if edge_row[3] and str(edge_row[3]) not in ["None", "__EMPTY__", '"NULL"'] else "",
-                                        }
-                                        combo_key = (
-                                            combo["consumer_module_id"],
-                                            combo["consumer_component_id"],
-                                            combo["provider_module_id"],
-                                            combo["provider_component_id"],
-                                        )
-                                        if combo_key not in seen:
-                                            seen.add(combo_key)
-                                            combos.append(combo)
-                                
-                                if not combos:
-                                    combos = [{
-                                        "consumer_module_id": "",
-                                        "provider_module_id": "",
-                                        "consumer_component_id": "",
-                                        "provider_component_id": "",
-                                    }]
-                                
-                                edge_data_list.append(combos)
-                                edge_cache[edge_cache_key] = combos
-                            
-                            paths_for_document[path_key] = {
-                                "path": nodes,
-                                "distance": len(nodes),
-                                "edge_data": edge_data_list,
-                                "edge_directions": edge_directions,
-                            }
-            
-            # Query 1: Direct edges (forward direction)
+            # Query per document: FIND NOLOOP PATH (must remain per-document;
+            # a single batched path query would mix document ids across hops).
             path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
-            
+
             logger.debug(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
             process_path_result(path_result_forward)
-            
-            
-            
+
+            if paths_for_document:
+                # Batch-fetch all edge data for every directed edge of this document.
+                edge_pairs = []
+                for pkey in paths_for_document:
+                    nodes = paths_for_document[pkey]["path"]
+                    dirs = paths_for_document[pkey]["edge_directions"]
+                    for i in range(len(nodes) - 1):
+                        from_node = nodes[i]
+                        to_node = nodes[i + 1]
+                        is_reverse = (dirs[i] == "reverse") if i < len(dirs) else False
+                        edge_pairs.append((from_node, to_node, is_reverse))
+                edge_cache = _fetch_document_edges(clean_document_id, list({n for p in paths_for_document.values() for n in p["path"]}), edge_pairs)
+
+                for pkey, pdata in paths_for_document.items():
+                    nodes = pdata["path"]
+                    dirs = pdata["edge_directions"]
+                    edge_data_list = []
+                    for i in range(len(nodes) - 1):
+                        from_node = nodes[i]
+                        to_node = nodes[i + 1]
+                        is_reverse = (dirs[i] == "reverse") if i < len(dirs) else False
+                        key = (from_node, to_node, is_reverse)
+                        edge_data_list.append(edge_cache.get(key, [{
+                            "consumer_module_id": "",
+                            "provider_module_id": "",
+                            "consumer_component_id": "",
+                            "provider_component_id": "",
+                        }]))
+                    pdata["edge_data"] = edge_data_list
+
             if paths_for_document:
                 out_data = outgoing_document_data.get(document_id, {})
                 in_data = incoming_document_data.get(document_id, {})
@@ -803,16 +883,34 @@ def _fetch_nebula_node_names_sync(
             for vid, name in _sys_names:
                 _get_or_create((vid, "", ""))["system_rsm_name"] = name
 
-        # MODULE / COMPONENT: per-id loop (multi-id batch is unreliable here).
-        for (sys_id, mod_id, comp_id) in node_set:
-            if mod_id:
-                _n = _fetch_names_single("MODULE", mod_id, "module_rsm_name")
-                if _n:
-                    _get_or_create((sys_id, mod_id, comp_id))["module_rsm_name"] = _n
-            if comp_id:
-                _n = _fetch_names_single("COMPONENT", comp_id, "component_rsm_name")
-                if _n:
-                    _get_or_create((sys_id, mod_id, comp_id))["component_rsm_name"] = _n
+        # MODULE / COMPONENT: batched (like SYSTEM), with per-id fallback if a
+        # multi-id FETCH PROP is rejected by the server.
+        def _apply_batched(
+            tag: str,
+            ids: set[str],
+            prop_key: str,
+        ):
+            if not ids:
+                return
+            _ids = sorted(ids)
+            name_pairs = _fetch_names_batch(tag, _ids, prop_key)
+            if name_pairs is None:
+                name_pairs = []
+                for _id in _ids:
+                    _n = _fetch_names_single(tag, _id, prop_key)
+                    if _n:
+                        name_pairs.append((_id, _n))
+            name_map = dict(name_pairs)
+            for (sys_id, mod_id, comp_id) in node_set:
+                _id = mod_id if tag == "MODULE" else comp_id
+                if _id and _id in name_map:
+                    key = "module_rsm_name" if tag == "MODULE" else "component_rsm_name"
+                    _get_or_create((sys_id, mod_id, comp_id))[key] = name_map[_id]
+
+        _mod_ids = {m for _, m, _ in node_set if m}
+        _comp_ids = {c for _, _, c in node_set if c}
+        _apply_batched("MODULE", _mod_ids, "module_rsm_name")
+        _apply_batched("COMPONENT", _comp_ids, "component_rsm_name")
 
         logger.info(f"Fetched names for {len(names)} nodes from NebulaGraph ({len(node_set)} requested)")
         return names
