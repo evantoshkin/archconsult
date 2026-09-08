@@ -198,9 +198,18 @@ def _execute_experiment_search_sync(
         incoming_document_data: dict[str, dict] = {}
         
         if finish_filter.system_rsm_id:
+            # Similarly to the start side, restrict incoming edges by the
+            # finish module/component so that document attribution is
+            # consistent with the (system, module, component) grouping.
+            incoming_edge_conditions = f'{edge_type}.rsm_document_date > "{cutoff_date}"'
+            if finish_filter.module_rsm_id:
+                incoming_edge_conditions += f' AND {edge_type}.provider_module_id == "{finish_filter.module_rsm_id}"'
+            if finish_filter.component_rsm_id:
+                incoming_edge_conditions += f' AND {edge_type}.provider_component_id == "{finish_filter.component_rsm_id}"'
+
             incoming_query = f"""
             GO FROM "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT
-            WHERE {edge_type}.rsm_document_date > "{cutoff_date}"
+            WHERE {incoming_edge_conditions}
             YIELD 
                 {edge_type}.rsm_document_id AS document_id,
                 {edge_type}.rsm_document_date AS document_date,
