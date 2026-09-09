@@ -13,14 +13,14 @@ class Settings(BaseSettings):
 
     SEARCH_DEPTH_DAYS: int = 30
     MAX_PATH_DEPTH: int = 7
-    DB_POOL_MAX_SIZE: int = 10
-    DB_POOL_MIN_SIZE: int = 2
+    DB_POOL_MAX_SIZE: int = 12
+    DB_POOL_MIN_SIZE: int = 3
 
     # NebulaGraph client pool tuning (ms / seconds).
     DB_CONNECT_TIMEOUT_MS: int = 5000
     DB_STATEMENT_TIMEOUT_MS: int = 30000
     DB_IDLE_TIME_SEC: int = 3600
-    DB_INTERVAL_CHECK_SEC: int = 5
+    DB_INTERVAL_CHECK_SEC: int = 15
     DB_SCHEMA_CHECK_MS: int = 1000
     DB_REINIT_COOLDOWN_SEC: float = 5.0
 
