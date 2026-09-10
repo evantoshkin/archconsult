@@ -72,6 +72,8 @@ async def execute_nebula_experiment_search(
     edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
     if source_type == "interface_registry":
         edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    elif source_type == "network_interface_registry":
+        edge_type = "INTERFACE_REGISTRY_NETWORK_INTERFACE_SYSTEM_LEVEL"
     logger.info(f"Using edge type: {edge_type} (source_type={source_type})")
 
     async def _run(session) -> dict[str, dict[str, dict]]:
@@ -109,7 +111,7 @@ def _execute_experiment_search_sync(
             start_edge_conditions += f' AND {edge_type}.consumer_component_id == "{start_filter.component_rsm_id}"'
         
         system_query = f"""
-        FETCH PROP ON SYSTEM "{start_filter.system_rsm_id}"
+        FETCH PROP ON SYSTEM, EXTERNAL "{start_filter.system_rsm_id}"
         YIELD vertex AS v
         """
         
@@ -149,19 +151,19 @@ def _execute_experiment_search_sync(
                 if document_date and document_date not in ("None", "__EMPTY__"):
                     document_date_clean = document_date.strip('"').strip()
                 consumer_module_id_clean = None
-                if consumer_module_id and consumer_module_id not in ("None", "__EMPTY__"):
+                if consumer_module_id and consumer_module_id not in ("None", "__EMPTY__", "__NULL__"):
                     consumer_module_id_clean = consumer_module_id.strip('"').strip()
                 provider_module_id_clean = None
-                if provider_module_id and provider_module_id not in ("None", "__EMPTY__"):
+                if provider_module_id and provider_module_id not in ("None", "__EMPTY__", "__NULL__"):
                     provider_module_id_clean = provider_module_id.strip('"').strip()
                 consumer_component_id_clean = None
-                if consumer_component_id and consumer_component_id not in ("None", "__EMPTY__"):
+                if consumer_component_id and consumer_component_id not in ("None", "__EMPTY__", "__NULL__"):
                     consumer_component_id_clean = consumer_component_id.strip('"').strip()
                 provider_component_id_clean = None
-                if provider_component_id and provider_component_id not in ("None", "__EMPTY__"):
+                if provider_component_id and provider_component_id not in ("None", "__EMPTY__", "__NULL__"):
                     provider_component_id_clean = provider_component_id.strip('"').strip()
                 diagram_id_clean = None
-                if diagram_id and diagram_id not in ("None", "__EMPTY__"):
+                if diagram_id and diagram_id not in ("None", "__EMPTY__", "__NULL__"):
                     diagram_id_clean = diagram_id.strip('"').strip()
 
                 doc_key = (document_id, diagram_id_clean or "")
@@ -312,6 +314,12 @@ def _execute_experiment_search_sync(
                 if (from_node, to_node, True) not in cache:
                     reverse_srcs.add((from_node, to_node))
 
+            diagram_cond = (
+                f'AND {edge_type}.rsm_diagram_id == "{diagram_id}" '
+                if diagram_id
+                else ""
+            )
+
             # One batched forward query: GO FROM <all srcs> OVER edge, dst IN all dsts.
             if forward_srcs:
                 srcs = ",".join(f'"{s}"' for s, _ in sorted(forward_srcs, key=lambda x: (x[0], x[1])))
@@ -319,11 +327,11 @@ def _execute_experiment_search_sync(
                 q_forward = (
                     f'GO FROM {srcs} OVER {edge_type} '
                     f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
-                    f'AND {edge_type}.rsm_diagram_id == "{diagram_id}" '
+                    f'{diagram_cond}'
                     f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
                     f'AND id($$) IN [{dsts}] '
                     f'YIELD src(edge) AS s, dst(edge) AS d, '
-                    f'{edge_type}.consumer_module_id, '
+f'{edge_type}.consumer_module_id, '
                     f'{edge_type}.provider_module_id, '
                     f'{edge_type}.consumer_component_id, '
                     f'{edge_type}.provider_component_id'
@@ -348,7 +356,7 @@ def _execute_experiment_search_sync(
                 q_reverse = (
                     f'GO FROM {srcs} OVER {edge_type} REVERSELY '
                     f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
-                    f'AND {edge_type}.rsm_diagram_id == "{diagram_id}" '
+                    f'{diagram_cond}'
                     f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
                     f'AND id($$) IN [{dsts}] '
                     f'YIELD src(edge) AS s, dst(edge) AS d, '
@@ -415,7 +423,12 @@ def _execute_experiment_search_sync(
 
             # Query per document: FIND NOLOOP PATH (must remain per-document;
             # a single batched path query would mix document ids across hops).
-            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_diagram_id == "{clean_diagram_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
+            diagram_cond = (
+                f'AND {edge_type}.rsm_diagram_id == "{clean_diagram_id}" '
+                if clean_diagram_id
+                else ""
+            )
+            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" {diagram_cond}AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p | LIMIT 100'
 
             logger.debug(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
@@ -503,6 +516,8 @@ async def fetch_one_hop_neighbors(
     edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
     if source_type == "interface_registry":
         edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    elif source_type == "network_interface_registry":
+        edge_type = "INTERFACE_REGISTRY_NETWORK_INTERFACE_SYSTEM_LEVEL"
 
     async def _run(session) -> dict[str, dict[str, dict]]:
         return await run_in_executor(
@@ -658,6 +673,8 @@ async def fetch_one_hop_neighbors_to_finish(
     edge_type = "VISION_INTERFACE_SYSTEM_LEVEL"
     if source_type == "interface_registry":
         edge_type = "INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL"
+    elif source_type == "network_interface_registry":
+        edge_type = "INTERFACE_REGISTRY_NETWORK_INTERFACE_SYSTEM_LEVEL"
 
     async def _run(session) -> dict[str, dict[str, dict]]:
         return await run_in_executor(
@@ -842,7 +859,8 @@ def _fetch_nebula_node_names_sync(
         def _fetch_names_batch(tag: str, ids: list[str], prop_key: str) -> list[tuple[str, str]]:
             """Fetch (vid, name) pairs for the given tag via one batched query."""
             ids_str = ",".join(f'"{_id}"' for _id in ids)
-            query = f'FETCH PROP ON {tag} {ids_str} YIELD vertex as v'
+            fetch_tag = f'{tag}, EXTERNAL' if tag == "SYSTEM" else tag
+            query = f'FETCH PROP ON {fetch_tag} {ids_str} YIELD vertex as v'
             logger.debug(f"Batched {tag} name query: {query}")
             res = session.execute(query)
             if not res.is_succeeded():
@@ -878,7 +896,8 @@ def _fetch_nebula_node_names_sync(
 
         def _fetch_names_single(tag: str, vid: str, prop_key: str) -> str | None:
             """Fetch the name of a single vertex by id."""
-            query = f'FETCH PROP ON {tag} "{vid}" YIELD vertex as v'
+            fetch_tag = f'{tag}, EXTERNAL' if tag == "SYSTEM" else tag
+            query = f'FETCH PROP ON {fetch_tag} "{vid}" YIELD vertex as v'
             res = session.execute(query)
             if not res.is_succeeded() or res.row_size() == 0:
                 return None

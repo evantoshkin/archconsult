@@ -40,15 +40,16 @@ class TraverseSortBy(str, Enum):
 class SourceType(str, Enum):
     VISION = "vision"
     INTERFACE_REGISTRY = "interface_registry"
+    NETWORK_INTERFACE_REGISTRY = "network_interface_registry"
 
 
 class PathRequest(BaseModel):
     source: SourceType = Field(
         default=SourceType.VISION,
-        description="Source type for path search: vision (VISION_INTERFACE_SYSTEM_LEVEL) or interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
+        description="Source type for path search: vision (VISION_INTERFACE_SYSTEM_LEVEL), interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL) or network_interface_registry (INTERFACE_REGISTRY_NETWORK_INTERFACE_SYSTEM_LEVEL)",
         json_schema_extra={
             "x-mcp-tool-arg-name": "source",
-            "x-mcp-tool-arg-description": "Источник данных: vision (VISION_INTERFACE_SYSTEM_LEVEL) или interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL)",
+            "x-mcp-tool-arg-description": "Источник данных: vision (VISION_INTERFACE_SYSTEM_LEVEL), interface_registry (INTERFACE_REGISTRY_INTERFACE_SYSTEM_LEVEL) или network_interface_registry (INTERFACE_REGISTRY_NETWORK_INTERFACE_SYSTEM_LEVEL)",
         }
     )
     start: Optional[TraverseFilter] = Field(
