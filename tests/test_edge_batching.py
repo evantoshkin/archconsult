@@ -48,8 +48,8 @@ class BatchingSession:
         if "GO FROM" in q and "BIDIRECT" in q and "src(edge)" not in q:
             # Outgoing/incoming document scan for the doc matching to proceed.
             # Column order: rsm_document_id, rsm_document_date, consumer_module,
-            # provider_module, consumer_component, provider_component.
-            return _Result([['"DOC1"', '"2026-01-01T12:00:00"', "", "", "", ""]])
+            # provider_module, consumer_component, provider_component, rsm_diagram_id.
+            return _Result([['"DOC1"', '"2026-01-01T12:00:00"', "", "", "", "", '"DIAG1"']])
         if "GO FROM" in q and ("src(edge)" in q or "YIELD src(edge)" in q):
             # Batched edge fetch -> return empty (no edge combos).
             return _Result([])

@@ -134,7 +134,7 @@ def _execute_experiment_search_sync(
                 return
             for row_index in range(result.row_size()):
                 row = result.row_values(row_index)
-                if len(row) < 6:
+                if len(row) < 7:
                     continue
                 document_id = str(row[0]) if row[0] else None
                 if not document_id or document_id in ("None", "__EMPTY__"):
@@ -144,6 +144,7 @@ def _execute_experiment_search_sync(
                 provider_module_id = str(row[3]) if row[3] else None
                 consumer_component_id = str(row[4]) if row[4] else None
                 provider_component_id = str(row[5]) if row[5] else None
+                diagram_id = str(row[6]) if len(row) > 6 and row[6] else None
                 document_date_clean = None
                 if document_date and document_date not in ("None", "__EMPTY__"):
                     document_date_clean = document_date.strip('"').strip()
@@ -159,22 +160,28 @@ def _execute_experiment_search_sync(
                 provider_component_id_clean = None
                 if provider_component_id and provider_component_id not in ("None", "__EMPTY__"):
                     provider_component_id_clean = provider_component_id.strip('"').strip()
-                if document_id not in target_dict:
-                    target_dict[document_id] = {
+                diagram_id_clean = None
+                if diagram_id and diagram_id not in ("None", "__EMPTY__"):
+                    diagram_id_clean = diagram_id.strip('"').strip()
+
+                doc_key = (document_id, diagram_id_clean or "")
+                if doc_key not in target_dict:
+                    target_dict[doc_key] = {
                         "document_date": document_date_clean,
                         "consumer_module_id": consumer_module_id_clean,
                         "provider_module_id": provider_module_id_clean,
                         "consumer_component_id": consumer_component_id_clean,
                         "provider_component_id": provider_component_id_clean,
+                        "diagram_id": diagram_id_clean,
                     }
                 elif document_date_clean:
-                    existing = target_dict[document_id].get("document_date")
+                    existing = target_dict[doc_key].get("document_date")
                     if existing is None or document_date_clean > existing:
-                        target_dict[document_id]["document_date"] = document_date_clean
-                        target_dict[document_id]["consumer_module_id"] = consumer_module_id_clean
-                        target_dict[document_id]["provider_module_id"] = provider_module_id_clean
-                        target_dict[document_id]["consumer_component_id"] = consumer_component_id_clean
-                        target_dict[document_id]["provider_component_id"] = provider_component_id_clean
+                        target_dict[doc_key]["document_date"] = document_date_clean
+                        target_dict[doc_key]["consumer_module_id"] = consumer_module_id_clean
+                        target_dict[doc_key]["provider_module_id"] = provider_module_id_clean
+                        target_dict[doc_key]["consumer_component_id"] = consumer_component_id_clean
+                        target_dict[doc_key]["provider_component_id"] = provider_component_id_clean
         
         outgoing_document_data: dict[str, dict] = {}
         
@@ -187,7 +194,8 @@ def _execute_experiment_search_sync(
             {edge_type}.consumer_module_id AS consumer_module_id,
             {edge_type}.provider_module_id AS provider_module_id,
             {edge_type}.consumer_component_id AS consumer_component_id,
-            {edge_type}.provider_component_id AS provider_component_id
+            {edge_type}.provider_component_id AS provider_component_id,
+            {edge_type}.rsm_diagram_id AS rsm_diagram_id
         """
         
         logger.debug(f"Executing start edges query (BIDIRECT): {edges_query}")
@@ -216,7 +224,8 @@ def _execute_experiment_search_sync(
                 {edge_type}.consumer_module_id AS consumer_module_id,
                 {edge_type}.provider_module_id AS provider_module_id,
                 {edge_type}.consumer_component_id AS consumer_component_id,
-                {edge_type}.provider_component_id AS provider_component_id
+                {edge_type}.provider_component_id AS provider_component_id,
+                {edge_type}.rsm_diagram_id AS rsm_diagram_id
             """
             
             logger.debug(f"Executing finish edges query (BIDIRECT): {incoming_query}")
@@ -228,7 +237,7 @@ def _execute_experiment_search_sync(
         incoming_document_ids = set(incoming_document_data.keys())
         matching_document_ids = outgoing_document_ids & incoming_document_ids
         
-        logger.info(f"Found {len(matching_document_ids)} matching document_ids between start and finish systems")
+        logger.info(f"Found {len(matching_document_ids)} matching (document_id, rsm_diagram_id) pairs between start and finish systems")
         
         results: dict[str, dict[str, dict]] = {}
 
@@ -254,6 +263,7 @@ def _execute_experiment_search_sync(
 
         def _fetch_document_edges(
             clean_document_id: str,
+            diagram_id: str,
             node_list: list[str],
             edge_pairs: list[tuple[str, str, bool]],
         ) -> dict[tuple, list[dict]]:
@@ -309,6 +319,7 @@ def _execute_experiment_search_sync(
                 q_forward = (
                     f'GO FROM {srcs} OVER {edge_type} '
                     f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
+                    f'AND {edge_type}.rsm_diagram_id == "{diagram_id}" '
                     f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
                     f'AND id($$) IN [{dsts}] '
                     f'YIELD src(edge) AS s, dst(edge) AS d, '
@@ -337,6 +348,7 @@ def _execute_experiment_search_sync(
                 q_reverse = (
                     f'GO FROM {srcs} OVER {edge_type} REVERSELY '
                     f'WHERE {edge_type}.rsm_document_id == "{clean_document_id}" '
+                    f'AND {edge_type}.rsm_diagram_id == "{diagram_id}" '
                     f'AND {edge_type}.rsm_document_date > "{cutoff_date}" '
                     f'AND id($$) IN [{dsts}] '
                     f'YIELD src(edge) AS s, dst(edge) AS d, '
@@ -373,8 +385,9 @@ def _execute_experiment_search_sync(
 
             return cache
 
-        for document_id in matching_document_ids:
+        for (document_id, diagram_id) in matching_document_ids:
             clean_document_id = document_id.strip('"')
+            clean_diagram_id = (diagram_id or "").strip('"')
 
             paths_for_document: dict[str, dict] = {}
 
@@ -402,7 +415,7 @@ def _execute_experiment_search_sync(
 
             # Query per document: FIND NOLOOP PATH (must remain per-document;
             # a single batched path query would mix document ids across hops).
-            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
+            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" AND {edge_type}.rsm_diagram_id == "{clean_diagram_id}" AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p'
 
             logger.debug(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)
@@ -419,7 +432,7 @@ def _execute_experiment_search_sync(
                         to_node = nodes[i + 1]
                         is_reverse = (dirs[i] == "reverse") if i < len(dirs) else False
                         edge_pairs.append((from_node, to_node, is_reverse))
-                edge_cache = _fetch_document_edges(clean_document_id, list({n for p in paths_for_document.values() for n in p["path"]}), edge_pairs)
+                edge_cache = _fetch_document_edges(clean_document_id, clean_diagram_id, list({n for p in paths_for_document.values() for n in p["path"]}), edge_pairs)
 
                 for pkey, pdata in paths_for_document.items():
                     nodes = pdata["path"]
@@ -439,8 +452,8 @@ def _execute_experiment_search_sync(
                     pdata["edge_data"] = edge_data_list
 
             if paths_for_document:
-                out_data = outgoing_document_data.get(document_id, {})
-                in_data = incoming_document_data.get(document_id, {})
+                out_data = outgoing_document_data.get((document_id, diagram_id), {})
+                in_data = incoming_document_data.get((document_id, diagram_id), {})
                 
                 out_date = out_data.get("document_date")
                 in_date = in_data.get("document_date")
@@ -451,15 +464,24 @@ def _execute_experiment_search_sync(
                 provider_module_id = out_data.get("provider_module_id") or in_data.get("provider_module_id")
                 consumer_component_id = out_data.get("consumer_component_id") or in_data.get("consumer_component_id")
                 provider_component_id = out_data.get("provider_component_id") or in_data.get("provider_component_id")
-                
-                results[document_id] = {
-                    "paths": paths_for_document,
-                    "document_rsm_date_time": latest_date,
-                    "consumer_module_id": consumer_module_id or "",
-                    "provider_module_id": provider_module_id or "",
-                    "consumer_component_id": consumer_component_id or "",
-                    "provider_component_id": provider_component_id or "",
-                }
+
+                # A single document may contain multiple rsm_diagram_id values;
+                # merge the paths so later diagrams do not overwrite earlier ones.
+                existing = results.get(document_id)
+                if existing:
+                    existing["paths"].update(paths_for_document)
+                    existing_date = existing.get("document_rsm_date_time")
+                    if latest_date and (not existing_date or latest_date > existing_date):
+                        existing["document_rsm_date_time"] = latest_date
+                else:
+                    results[document_id] = {
+                        "paths": paths_for_document,
+                        "document_rsm_date_time": latest_date,
+                        "consumer_module_id": consumer_module_id or "",
+                        "provider_module_id": provider_module_id or "",
+                        "consumer_component_id": consumer_component_id or "",
+                        "provider_component_id": provider_component_id or "",
+                    }
         
         logger.info(f"NebulaGraph experiment search returned {len(results)} matching document groups with paths")
         return results
