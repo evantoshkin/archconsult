@@ -63,6 +63,8 @@ async def execute_nebula_experiment_search(
     finish_filter: TraverseFilter,
     depth_days: int,
     source_type: str = "vision",
+    max_path_depth: int = settings.MAX_PATH_DEPTH,
+    path_limit: int = settings.PATH_LIMIT,
 ) -> dict[str, dict[str, dict]]:
     from datetime import datetime, timedelta
 
@@ -79,7 +81,7 @@ async def execute_nebula_experiment_search(
     async def _run(session) -> dict[str, dict[str, dict]]:
         return await run_in_executor(
             _execute_experiment_search_sync, session, start_filter, finish_filter,
-            cutoff_date, edge_type,
+            cutoff_date, edge_type, max_path_depth, path_limit,
         )
 
     result = await _with_healthy_session(_run)
@@ -92,6 +94,8 @@ def _execute_experiment_search_sync(
     finish_filter: TraverseFilter,
     cutoff_date: str,
     edge_type: str,
+    max_path_depth: int = settings.MAX_PATH_DEPTH,
+    path_limit: int = settings.PATH_LIMIT,
 ) -> dict[str, dict[str, dict]]:
     try:
         result = session.execute(f'USE {settings.NEBULA_SPACE};')
@@ -303,12 +307,12 @@ def _execute_experiment_search_sync(
                     cache[key] = []
                 return key
 
-            # Collect unique directed (non-self-loop) edges for this document.
+            # Collect unique directed edges for this document (incl. self-loops,
+            # so that same-vertex integrations with different module/component
+            # are resolved and shown as separate segments).
             forward_srcs = set()
             reverse_srcs = set()
             for (from_node, to_node, _is_rev) in edge_pairs:
-                if from_node == to_node:
-                    continue
                 if (from_node, to_node, False) not in cache:
                     forward_srcs.add((from_node, to_node))
                 if (from_node, to_node, True) not in cache:
@@ -413,7 +417,7 @@ f'{edge_type}.consumer_module_id, '
                         continue
                     nodes, temp_dirs = _parse_path(str(path))
                     edge_directions = temp_dirs[:len(nodes)-1] if len(temp_dirs) >= len(nodes) - 1 else ["forward"] * (len(nodes) - 1)
-                    path_key = tuple(nodes)
+                    path_key = (tuple(nodes), tuple(edge_directions))
                     if path_key not in paths_for_document:
                         paths_for_document[path_key] = {
                             "path": nodes,
@@ -428,7 +432,7 @@ f'{edge_type}.consumer_module_id, '
                 if clean_diagram_id
                 else ""
             )
-            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" {diagram_cond}AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {settings.MAX_PATH_DEPTH} STEPS YIELD path AS p | LIMIT 100'
+            path_query_forward = f'FIND NOLOOP PATH FROM "{start_filter.system_rsm_id}" TO "{finish_filter.system_rsm_id}" OVER {edge_type} BIDIRECT WHERE {edge_type}.rsm_document_id == "{clean_document_id}" {diagram_cond}AND {edge_type}.rsm_document_date > "{cutoff_date}" UPTO {max_path_depth} STEPS YIELD path AS p | LIMIT {path_limit}'
 
             logger.debug(f"Executing forward path query for document_id {document_id}: {path_query_forward}")
             path_result_forward = session.execute(path_query_forward)

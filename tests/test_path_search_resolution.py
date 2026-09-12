@@ -120,7 +120,7 @@ async def test_path_search_resolves_both_when_no_system(tmp_path, monkeypatch, m
         anchors.append(anchor)
         return f"SYS-{anchor}"
 
-    async def fake_search(start_filter, finish_filter, depth_days, source_type):
+    async def fake_search(start_filter, finish_filter, depth_days, source_type, max_path_depth=7, path_limit=100):
         captured["start"] = start_filter.system_rsm_id
         captured["finish"] = finish_filter.system_rsm_id
         return {}
@@ -156,3 +156,130 @@ async def test_path_search_leaves_system_empty_when_no_ancestor(tmp_path, monkey
     req = PathRequest(start={"module_rsm_id": "M1"}, finish={"module_rsm_id": "M2"})
     resp = await path_search(req)
     assert resp.paths == []
+
+
+async def test_path_search_swaps_module_component_on_reverse_edge(monkeypatch, mocker):
+    import app.api.v3.paths as paths_mod
+
+    # Simulate the graph edge directional semantics:
+    #   provider is the endpoint of the edge in its stored direction,
+    #   consumer is the start of the edge in its stored direction.
+    # A "reverse" traversal means we walk consumer<-provider, so:
+    #   source (nodes[i+1]) belongs to provider_*, destination (nodes[i]) to consumer_*.
+    results = {
+        '"DOC1"': {
+            "document_rsm_date_time": "2026-01-01T00:00:00",
+            "paths": {
+                ("S_DST", "S_RES"): {
+                    # Traversed against the stored edge direction: consumer<-provider.
+                    # nodes[0]=S_DST (edge endpoint/provider), nodes[1]=S_RES (edge start/consumer).
+                    "path": ["S_DST", "S_RES"],
+                    "distance": 2,
+                    "edge_data": [
+                        {
+                            "consumer_module_id": "MOD_CONSUMER",
+                            "provider_module_id": "MOD_PROVIDER",
+                            "consumer_component_id": "CMP_CONSUMER",
+                            "provider_component_id": "CMP_PROVIDER",
+                        }
+                    ],
+                    "edge_directions": ["reverse"],
+                }
+            },
+        }
+    }
+
+    async def fake_search(start_filter, finish_filter, depth_days, source_type, max_path_depth=7, path_limit=100):
+        return results
+
+    async def fake_names(nodes):
+        return {
+            ("S_RES", "MOD_PROVIDER", "CMP_PROVIDER"): {
+                "system_rsm_name": "RES",
+                "module_rsm_name": "MOD_PROVIDER",
+                "component_rsm_name": "CMP_PROVIDER",
+            },
+            ("S_DST", "MOD_CONSUMER", "CMP_CONSUMER"): {
+                "system_rsm_name": "DST",
+                "module_rsm_name": "MOD_CONSUMER",
+                "component_rsm_name": "CMP_CONSUMER",
+            },
+        }
+
+    monkeypatch.setattr(paths_mod, "execute_nebula_experiment_search", fake_search)
+    monkeypatch.setattr(paths_mod, "fetch_nebula_node_names", fake_names)
+
+    req = PathRequest(
+        start={"system_rsm_id": "S_RES"},
+        finish={"system_rsm_id": "S_DST"},
+    )
+    resp = await path_search(req)
+
+    assert len(resp.paths) == 1
+    seg = resp.paths[0].segments[0]
+    # Reverse edge: source takes provider_*, destination takes consumer_*.
+    assert seg.source.system_rsm_id == "S_RES"
+    assert seg.source.module_rsm_id == "MOD_PROVIDER"
+    assert seg.source.component_rsm_id == "CMP_PROVIDER"
+    assert seg.destination.system_rsm_id == "S_DST"
+    assert seg.destination.module_rsm_id == "MOD_CONSUMER"
+    assert seg.destination.component_rsm_id == "CMP_CONSUMER"
+
+
+async def test_path_search_keeps_consumer_provider_on_forward_edge(monkeypatch, mocker):
+    import app.api.v3.paths as paths_mod
+
+    results = {
+        '"DOC1"': {
+            "document_rsm_date_time": "2026-01-01T00:00:00",
+            "paths": {
+                ("S_RES", "S_DST"): {
+                    "path": ["S_RES", "S_DST"],
+                    "distance": 2,
+                    "edge_data": [
+                        {
+                            "consumer_module_id": "MOD_CONSUMER",
+                            "provider_module_id": "MOD_PROVIDER",
+                            "consumer_component_id": "CMP_CONSUMER",
+                            "provider_component_id": "CMP_PROVIDER",
+                        }
+                    ],
+                    "edge_directions": ["forward"],
+                }
+            },
+        }
+    }
+
+    async def fake_search(start_filter, finish_filter, depth_days, source_type, max_path_depth=7, path_limit=100):
+        return results
+
+    async def fake_names(nodes):
+        return {
+            ("S_RES", "MOD_CONSUMER", "CMP_CONSUMER"): {
+                "system_rsm_name": "RES",
+                "module_rsm_name": "MOD_CONSUMER",
+                "component_rsm_name": "CMP_CONSUMER",
+            },
+            ("S_DST", "MOD_PROVIDER", "CMP_PROVIDER"): {
+                "system_rsm_name": "DST",
+                "module_rsm_name": "MOD_PROVIDER",
+                "component_rsm_name": "CMP_PROVIDER",
+            },
+        }
+
+    monkeypatch.setattr(paths_mod, "execute_nebula_experiment_search", fake_search)
+    monkeypatch.setattr(paths_mod, "fetch_nebula_node_names", fake_names)
+
+    req = PathRequest(
+        start={"system_rsm_id": "S_RES"},
+        finish={"system_rsm_id": "S_DST"},
+    )
+    resp = await path_search(req)
+
+    assert len(resp.paths) == 1
+    seg = resp.paths[0].segments[0]
+    # Forward edge: source keeps consumer_*, destination keeps provider_*.
+    assert seg.source.module_rsm_id == "MOD_CONSUMER"
+    assert seg.source.component_rsm_id == "CMP_CONSUMER"
+    assert seg.destination.module_rsm_id == "MOD_PROVIDER"
+    assert seg.destination.component_rsm_id == "CMP_PROVIDER"

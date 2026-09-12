@@ -96,6 +96,25 @@ class PathRequest(BaseModel):
             "x-mcp-tool-arg-description": "Количество дней глубины поиска (от 1 до 365)",
         }
     )
+    max_path_depth: int = Field(
+        default=settings.MAX_PATH_DEPTH,
+        ge=1,
+        le=32,
+        description="Maximum path depth in steps for FIND NOLOOP PATH",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "max_path_depth",
+            "x-mcp-tool-arg-description": "Максимальная глубина пути в шагах (UPTO N STEPS)",
+        }
+    )
+    path_limit: int = Field(
+        default=settings.PATH_LIMIT,
+        ge=1,
+        description="Maximum number of raw paths returned by FIND NOLOOP PATH",
+        json_schema_extra={
+            "x-mcp-tool-arg-name": "path_limit",
+            "x-mcp-tool-arg-description": "Лимит количества сырых путей, возвращаемых FIND NOLOOP PATH",
+        }
+    )
 
 
 class PathSegmentSource(BaseModel):

@@ -9,12 +9,13 @@ services:
       - "8001:8000"
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - NEBULA_HOST=${NEBULA_HOST:-host.docker.internal}
-      - NEBULA_PORT=${NEBULA_PORT:-9670}
+      - NEBULA_HOST=${NEBULA_HOST:-graphd}
+      - NEBULA_PORT=${NEBULA_PORT:-9669}
       - NEBULA_USER=${NEBULA_USER:-root}
       - NEBULA_PASSWORD=${NEBULA_PASSWORD:-nebula}
-      - SEARCH_DEPTH_DAYS=${SEARCH_DEPTH_DAYS:-90}
+      - SEARCH_DEPTH_DAYS=${SEARCH_DEPTH_DAYS:-30}
       - MAX_PATH_DEPTH=${MAX_PATH_DEPTH:-7}
+      - PATH_LIMIT=${PATH_LIMIT:-100}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

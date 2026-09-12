@@ -76,6 +76,8 @@ async def path_search(request: PathRequest) -> PathResponse:
                 finish_filter=finish,
                 depth_days=request.depth_days,
                 source_type=request.source.value,
+                max_path_depth=request.max_path_depth,
+                path_limit=request.path_limit,
             )
         except Exception as e:
             logger.error(f"NebulaGraph search error: {e}")
@@ -115,14 +117,17 @@ async def path_search(request: PathRequest) -> PathResponse:
         if is_reverse:
             src_node = nodes[i + 1]
             dst_node = nodes[i]
+            src_mod = combo.get("provider_module_id", "")
+            src_comp = combo.get("provider_component_id", "")
+            dst_mod = combo.get("consumer_module_id", "")
+            dst_comp = combo.get("consumer_component_id", "")
         else:
             src_node = nodes[i]
             dst_node = nodes[i + 1]
-
-        src_mod = combo.get("consumer_module_id", "")
-        src_comp = combo.get("consumer_component_id", "")
-        dst_mod = combo.get("provider_module_id", "")
-        dst_comp = combo.get("provider_component_id", "")
+            src_mod = combo.get("consumer_module_id", "")
+            src_comp = combo.get("consumer_component_id", "")
+            dst_mod = combo.get("provider_module_id", "")
+            dst_comp = combo.get("provider_component_id", "")
 
         if i == 0:
             if start.module_rsm_id:

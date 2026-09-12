@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     SEARCH_DEPTH_DAYS: int = 30
     MAX_PATH_DEPTH: int = 7
+    PATH_LIMIT: int = 100
     DB_POOL_MAX_SIZE: int = 12
     DB_POOL_MIN_SIZE: int = 3
 
